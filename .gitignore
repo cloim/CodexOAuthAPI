@@ -1,0 +1,8 @@
+.venv/
+.env
+.env.local
+.codex-oauth-api-state/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+%programdata%/
