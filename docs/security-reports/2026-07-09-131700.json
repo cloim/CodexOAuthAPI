@@ -1,0 +1,112 @@
+{
+  "version": "2.0.0",
+  "date": "2026-07-09T13:17:00+09:00",
+  "mode": "daily",
+  "scope": "full",
+  "diff_mode": false,
+  "phases_run": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+  "architecture_summary": {
+    "stack": "Python 3.12 FastAPI service packaged with uv",
+    "components": [
+      "FastAPI OpenAI-compatible API wrapper",
+      "isolated Codex SDK client",
+      "project-local dotenv/environment configuration",
+      "project-local Codex OAuth state directory"
+    ],
+    "trust_boundaries": [
+      "HTTP clients to FastAPI /v1/* endpoints",
+      "FastAPI server to isolated Codex SDK process",
+      "local .env and OS environment into server settings",
+      "project-local OAuth state storage"
+    ],
+    "invariants": [
+      "/health remains public",
+      "/v1/* access control is enforced when CODEX_OAUTH_API_KEY or CODEX_OAUTH_API_ALLOWED_IPS is configured",
+      "forwarded client IP headers are not trusted",
+      "Codex SDK calls run with isolated CODEX_HOME, HOME, and USERPROFILE"
+    ]
+  },
+  "attack_surface": {
+    "code": {
+      "public_endpoints": 1,
+      "authenticated": 2,
+      "admin": 0,
+      "api": 2,
+      "uploads": 0,
+      "integrations": 1,
+      "background_jobs": 0,
+      "websockets": 0
+    },
+    "infrastructure": {
+      "ci_workflows": 0,
+      "webhook_receivers": 0,
+      "container_configs": 0,
+      "iac_configs": 0,
+      "deploy_targets": 0,
+      "secret_management": "OS environment variables plus ignored local .env; project-local Codex OAuth state"
+    }
+  },
+  "findings": [],
+  "supply_chain_summary": {
+    "direct_deps": 6,
+    "transitive_deps": 20,
+    "critical_cves": 0,
+    "high_cves": 0,
+    "install_scripts": 0,
+    "lockfile_present": true,
+    "lockfile_tracked": true,
+    "tools_skipped": []
+  },
+  "filter_stats": {
+    "candidates_scanned": 6,
+    "hard_exclusion_filtered": 4,
+    "confidence_gate_filtered": 2,
+    "verification_filtered": 0,
+    "reported": 0
+  },
+  "totals": {
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "tentative": 0
+  },
+  "trend": {
+    "prior_report_date": null,
+    "resolved": 0,
+    "persistent": 0,
+    "new": 0,
+    "direction": "first_run"
+  },
+  "verification": {
+    "commands": [
+      "git ls-files",
+      "git check-ignore -v .env",
+      "custom high-confidence secret scan over current tracked files and git history",
+      "uv tree --all-groups",
+      "uvx pip-audit --progress-spinner off",
+      "rg high-risk OWASP and LLM patterns",
+      "uv run pytest -q"
+    ],
+    "results": [
+      "No tracked real .env file; only .env.example is tracked",
+      ".env is ignored by .gitignore",
+      "No high-confidence secret patterns found in current tracked files or git history",
+      "pip-audit reported no known vulnerabilities",
+      "No tracked CI, container, IaC, webhook, upload, or WebSocket surfaces found",
+      "32 tests passed with one existing TestClient deprecation warning"
+    ],
+    "independent_verifier": "Self-verified - independent verifier unavailable"
+  },
+  "external_sources": [
+    {
+      "name": "pip-audit PyPI project",
+      "url": "https://pypi.org/project/pip-audit/",
+      "purpose": "Dependency vulnerability scanner behavior and data source context"
+    },
+    {
+      "name": "OSV",
+      "url": "https://osv.dev/",
+      "purpose": "Open source vulnerability database context"
+    }
+  ]
+}
