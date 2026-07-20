@@ -128,6 +128,7 @@ def create_app(
                         path=debug_path,
                         status_code=403,
                         body=response_body,
+                        client_ip=client_host,
                     )
                 return JSONResponse(
                     status_code=403,
