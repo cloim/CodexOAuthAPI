@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from threading import Event
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from codex_oauth_api.isolated_codex import (
     CodexOAuthLoginResult,
     IsolatedCodexAuthenticationError,
     IsolatedCodexJSONClient,
+    IsolatedCodexRuntime,
     IsolatedCodexSettings,
 )
 
@@ -73,6 +75,7 @@ class FakeCodex:
         base_instructions=None,
         developer_instructions=None,
         config=None,
+        service_tier=None,
     ):
         self.thread_start_calls.append(
             {
@@ -82,9 +85,33 @@ class FakeCodex:
                 "base_instructions": base_instructions,
                 "developer_instructions": developer_instructions,
                 "config": config,
+                "service_tier": service_tier,
             }
         )
         return self.thread
+
+
+def test_runtime_reuses_one_codex_process_and_closes_it_once(tmp_path: Path):
+    codex = FakeCodex("공유 응답")
+    close_calls = []
+    codex.close = lambda: close_calls.append("close")
+    runtime = IsolatedCodexRuntime(
+        IsolatedCodexSettings(state_root=tmp_path / "state"),
+        codex_factory=lambda: codex,
+        sandbox="read-only",
+    )
+
+    runtime.start()
+    first = runtime.create_client("gpt-5.5", auto_login=False)
+    second = runtime.create_client("gpt-5.5", auto_login=False)
+
+    assert first.complete_text("첫 요청") == "공유 응답"
+    assert second.complete_text("둘째 요청") == "공유 응답"
+    assert len(codex.thread_start_calls) == 2
+
+    runtime.close()
+    runtime.close()
+    assert close_calls == ["close"]
 
 
 def test_complete_json_starts_ephemeral_thread_without_global_instructions():
@@ -100,6 +127,7 @@ def test_complete_json_starts_ephemeral_thread_without_global_instructions():
             "base_instructions": ISOLATED_CODEX_BASE_INSTRUCTIONS,
             "developer_instructions": None,
             "config": {"skills": {"include_instructions": False}},
+            "service_tier": None,
         }
     ]
     assert codex.thread.prompts == [
@@ -112,7 +140,7 @@ def test_stream_text_yields_codex_agent_message_deltas():
     codex = FakeCodex("최종 응답")
     client = IsolatedCodexJSONClient("gpt-5.5", codex_factory=lambda: codex, sandbox="read-only")
 
-    assert list(client.stream_text("안녕?")) == ["첫", "째"]
+    assert list(client.stream_text("안녕?", service_tier="fast")) == ["첫", "째"]
     assert codex.thread_start_calls == [
         {
             "model": "gpt-5.5",
@@ -121,10 +149,47 @@ def test_stream_text_yields_codex_agent_message_deltas():
             "base_instructions": ISOLATED_CODEX_BASE_INSTRUCTIONS,
             "developer_instructions": None,
             "config": {"skills": {"include_instructions": False}},
+            "service_tier": "fast",
         }
     ]
     assert codex.thread.prompts == ["안녕?"]
     assert codex.thread.turn_kwargs == [{}]
+
+
+def test_runtime_prewarms_standard_default_model_threads_and_replenishes_them(tmp_path: Path):
+    replenished = Event()
+
+    class PoolingCodex(FakeCodex):
+        def thread_start(self, **kwargs):
+            thread = FakeThread(f"응답-{len(self.thread_start_calls) + 1}")
+            self.thread_start_calls.append(kwargs)
+            if len(self.thread_start_calls) == 3:
+                replenished.set()
+            return thread
+
+    codex = PoolingCodex("미사용")
+    codex.close = lambda: None
+    runtime = IsolatedCodexRuntime(
+        IsolatedCodexSettings(
+            state_root=tmp_path / "state",
+            pooled_model="gpt-5.5",
+            thread_pool_size=2,
+        ),
+        codex_factory=lambda: codex,
+        sandbox="read-only",
+    )
+
+    runtime.start()
+    assert len(codex.thread_start_calls) == 2
+    assert all(call["service_tier"] is None for call in codex.thread_start_calls)
+
+    client = runtime.create_client("gpt-5.5", auto_login=False)
+    assert client.complete_text("일반 요청") in {"응답-1", "응답-2"}
+    assert replenished.wait(1)
+
+    client.complete_text("Fast 요청", service_tier="fast")
+    assert any(call["service_tier"] == "fast" for call in codex.thread_start_calls)
+    runtime.close()
 
 
 def test_settings_build_codex_config_uses_project_local_state_and_excludes_openai_api_key(

@@ -4,9 +4,11 @@ import json
 import os
 import subprocess
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Lock
+from queue import Empty, Queue
+from threading import Lock, Thread, current_thread
 from typing import Any
 
 
@@ -30,11 +32,17 @@ class IsolatedCodexSettings:
     state_root: Path | str = field(default_factory=lambda: Path.cwd() / ".codex-oauth-api-state")
     cwd: Path | str | None = None
     base_instructions: str = ISOLATED_CODEX_BASE_INSTRUCTIONS
+    pooled_model: str | None = None
+    thread_pool_size: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "state_root", Path(self.state_root))
         if self.cwd is not None:
             object.__setattr__(self, "cwd", Path(self.cwd))
+        if self.thread_pool_size < 0:
+            raise ValueError("thread_pool_size must be zero or greater")
+        if self.thread_pool_size > 0 and self.pooled_model is None:
+            raise ValueError("pooled_model is required when thread_pool_size is greater than zero")
 
     @property
     def codex_home(self) -> Path:
@@ -132,6 +140,7 @@ class IsolatedCodexJSONClient:
         oauth_login=None,
         on_device_code=None,
         on_login_complete=None,
+        thread_factory=None,
     ):
         if settings is not None and any(value is not None for value in [state_root, cwd, base_instructions]):
             raise ValueError("settings cannot be combined with state_root, cwd, or base_instructions")
@@ -143,6 +152,7 @@ class IsolatedCodexJSONClient:
         self.oauth_login = oauth_login
         self.on_device_code = on_device_code
         self.on_login_complete = on_login_complete
+        self.thread_factory = thread_factory
         self.settings = settings or IsolatedCodexSettings(
             state_root=state_root if state_root is not None else Path.cwd() / ".codex-oauth-api-state",
             cwd=cwd,
@@ -156,25 +166,45 @@ class IsolatedCodexJSONClient:
         content = self._run_codex(prompt)
         return self._parse_json_object(content)
 
-    def complete_text(self, prompt: str, *, effort: str | None = None) -> str:
-        return self._run_codex(prompt, effort=self._coerce_reasoning_effort(effort))
+    def complete_text(
+        self,
+        prompt: str,
+        *,
+        effort: str | None = None,
+        service_tier: str | None = None,
+    ) -> str:
+        return self._run_codex(
+            prompt,
+            effort=self._coerce_reasoning_effort(effort),
+            service_tier=service_tier,
+        )
 
-    def stream_text(self, prompt: str, *, effort: str | None = None):
-        yield from self._stream_codex(prompt, effort=self._coerce_reasoning_effort(effort))
+    def stream_text(
+        self,
+        prompt: str,
+        *,
+        effort: str | None = None,
+        service_tier: str | None = None,
+    ):
+        yield from self._stream_codex(
+            prompt,
+            effort=self._coerce_reasoning_effort(effort),
+            service_tier=service_tier,
+        )
 
-    def _run_codex(self, prompt: str, *, effort=None) -> str:
+    def _run_codex(self, prompt: str, *, effort=None, service_tier: str | None = None) -> str:
         try:
-            return self._run_codex_once(prompt, effort=effort)
+            return self._run_codex_once(prompt, effort=effort, service_tier=service_tier)
         except RuntimeError as error:
             if self.auto_login and self._is_authentication_error(error):
                 self._login_with_oauth()
                 try:
-                    return self._run_codex_once(prompt, effort=effort)
+                    return self._run_codex_once(prompt, effort=effort, service_tier=service_tier)
                 except RuntimeError as retry_error:
                     raise self._map_runtime_error(retry_error) from retry_error
             raise self._map_runtime_error(error) from error
 
-    def _run_codex_once(self, prompt: str, *, effort=None) -> str:
+    def _run_codex_once(self, prompt: str, *, effort=None, service_tier: str | None = None) -> str:
         codex_factory = self.codex_factory
         sandbox = self.sandbox
         if codex_factory is None:
@@ -183,34 +213,38 @@ class IsolatedCodexJSONClient:
                 sandbox = default_sandbox
 
         with codex_factory() as codex:
-            thread = codex.thread_start(
-                model=self.model,
-                sandbox=sandbox,
-                ephemeral=True,
-                base_instructions=self.settings.base_instructions,
-                developer_instructions=None,
-                config={"skills": {"include_instructions": False}},
-            )
+            if self.thread_factory is None:
+                thread = codex.thread_start(
+                    model=self.model,
+                    sandbox=sandbox,
+                    ephemeral=True,
+                    base_instructions=self.settings.base_instructions,
+                    developer_instructions=None,
+                    config={"skills": {"include_instructions": False}},
+                    service_tier=service_tier,
+                )
+            else:
+                thread = self.thread_factory(self.model, service_tier)
             run_kwargs = {}
             if effort is not None:
                 run_kwargs["effort"] = effort
             result = thread.run(prompt, **run_kwargs)
         return result.final_response
 
-    def _stream_codex(self, prompt: str, *, effort=None):
+    def _stream_codex(self, prompt: str, *, effort=None, service_tier: str | None = None):
         try:
-            yield from self._stream_codex_once(prompt, effort=effort)
+            yield from self._stream_codex_once(prompt, effort=effort, service_tier=service_tier)
         except RuntimeError as error:
             if self.auto_login and self._is_authentication_error(error):
                 self._login_with_oauth()
                 try:
-                    yield from self._stream_codex_once(prompt, effort=effort)
+                    yield from self._stream_codex_once(prompt, effort=effort, service_tier=service_tier)
                     return
                 except RuntimeError as retry_error:
                     raise self._map_runtime_error(retry_error) from retry_error
             raise self._map_runtime_error(error) from error
 
-    def _stream_codex_once(self, prompt: str, *, effort=None):
+    def _stream_codex_once(self, prompt: str, *, effort=None, service_tier: str | None = None):
         codex_factory = self.codex_factory
         sandbox = self.sandbox
         if codex_factory is None:
@@ -219,14 +253,18 @@ class IsolatedCodexJSONClient:
                 sandbox = default_sandbox
 
         with codex_factory() as codex:
-            thread = codex.thread_start(
-                model=self.model,
-                sandbox=sandbox,
-                ephemeral=True,
-                base_instructions=self.settings.base_instructions,
-                developer_instructions=None,
-                config={"skills": {"include_instructions": False}},
-            )
+            if self.thread_factory is None:
+                thread = codex.thread_start(
+                    model=self.model,
+                    sandbox=sandbox,
+                    ephemeral=True,
+                    base_instructions=self.settings.base_instructions,
+                    developer_instructions=None,
+                    config={"skills": {"include_instructions": False}},
+                    service_tier=service_tier,
+                )
+            else:
+                thread = self.thread_factory(self.model, service_tier)
             run_kwargs = {}
             if effort is not None:
                 run_kwargs["effort"] = effort
@@ -305,6 +343,129 @@ class IsolatedCodexJSONClient:
         if not isinstance(data, dict):
             raise ValueError("Codex response must be a JSON object")
         return data
+
+
+class IsolatedCodexRuntime:
+    def __init__(
+        self,
+        settings: IsolatedCodexSettings,
+        *,
+        codex_factory=None,
+        sandbox=None,
+    ) -> None:
+        self.settings = settings
+        self._codex_factory = codex_factory
+        self.sandbox = sandbox
+        self._codex = None
+        self._thread_pool: Queue[Any] = Queue()
+        self._pool_lock = Lock()
+        self._replenishment_threads: set[Thread] = set()
+        self._closing = False
+
+    def start(self) -> None:
+        if self._codex is not None:
+            return
+
+        factory = self._codex_factory
+        if factory is None:
+            try:
+                from openai_codex import Codex, CodexConfig, Sandbox
+            except ImportError as error:
+                raise RuntimeError("openai-codex package is required") from error
+            factory = build_hidden_window_codex_factory(Codex, CodexConfig, self.settings)
+            if self.sandbox is None:
+                self.sandbox = Sandbox.read_only
+
+        self._codex = factory()
+        self._closing = False
+        for _ in range(self.settings.thread_pool_size):
+            self._thread_pool.put(self._start_thread(self.settings.pooled_model, None))
+
+    def create_client(self, model: str, *, auto_login: bool) -> IsolatedCodexJSONClient:
+        if self._codex is None:
+            raise RuntimeError("Codex runtime has not been started")
+        return IsolatedCodexJSONClient(
+            model,
+            settings=self.settings,
+            codex_factory=self._shared_codex_factory,
+            sandbox=self.sandbox,
+            auto_login=auto_login,
+            thread_factory=self._acquire_thread,
+        )
+
+    def close(self) -> None:
+        if self._codex is None:
+            return
+        with self._pool_lock:
+            self._closing = True
+            workers = list(self._replenishment_threads)
+        for worker in workers:
+            worker.join()
+        codex = self._codex
+        self._codex = None
+        while True:
+            try:
+                self._thread_pool.get_nowait()
+            except Empty:
+                break
+        codex.close()
+
+    def _start_thread(self, model: str | None, service_tier: str | None):
+        if self._codex is None:
+            raise RuntimeError("Codex runtime has not been started")
+        if model is None:
+            raise RuntimeError("A model is required to start a Codex thread")
+        return self._codex.thread_start(
+            model=model,
+            sandbox=self.sandbox,
+            ephemeral=True,
+            base_instructions=self.settings.base_instructions,
+            developer_instructions=None,
+            config={"skills": {"include_instructions": False}},
+            service_tier=service_tier,
+        )
+
+    def _acquire_thread(self, model: str, service_tier: str | None):
+        uses_pool = (
+            self.settings.thread_pool_size > 0
+            and model == self.settings.pooled_model
+            and service_tier is None
+        )
+        if not uses_pool:
+            return self._start_thread(model, service_tier)
+        try:
+            thread = self._thread_pool.get_nowait()
+        except Empty:
+            return self._start_thread(model, None)
+        self._schedule_replenishment()
+        return thread
+
+    def _schedule_replenishment(self) -> None:
+        with self._pool_lock:
+            if self._closing:
+                return
+            worker = Thread(
+                target=self._replenish_thread_pool,
+                name="codex-thread-pool-replenishment",
+                daemon=True,
+            )
+            self._replenishment_threads.add(worker)
+            worker.start()
+
+    def _replenish_thread_pool(self) -> None:
+        try:
+            thread = self._start_thread(self.settings.pooled_model, None)
+            with self._pool_lock:
+                if not self._closing:
+                    self._thread_pool.put(thread)
+        finally:
+            with self._pool_lock:
+                self._replenishment_threads.discard(current_thread())
+
+    def _shared_codex_factory(self):
+        if self._codex is None:
+            raise RuntimeError("Codex runtime has not been started")
+        return nullcontext(self._codex)
 
 
 def build_hidden_window_popen(original_popen):
