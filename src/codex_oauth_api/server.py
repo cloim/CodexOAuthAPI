@@ -5,9 +5,11 @@ import os
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
@@ -18,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .isolated_codex import (
     ISOLATED_CODEX_BASE_INSTRUCTIONS,
     IsolatedCodexAuthenticationError,
-    IsolatedCodexJSONClient,
+    IsolatedCodexRuntime,
     IsolatedCodexSettings,
 )
 
@@ -27,6 +29,7 @@ from .isolated_codex import (
 class ServerSettings:
     state_root: Path | str = field(default_factory=lambda: Path.cwd() / ".codex-oauth-api-state")
     default_model: str = "gpt-5.5"
+    thread_pool_size: int = 4
     api_key: str | None = None
     allowed_ips: tuple[str, ...] = ()
     auto_login: bool = False
@@ -35,6 +38,8 @@ class ServerSettings:
     def __post_init__(self) -> None:
         object.__setattr__(self, "state_root", Path(self.state_root))
         object.__setattr__(self, "allowed_ips", tuple(self.allowed_ips))
+        if self.thread_pool_size < 0:
+            raise ValueError("thread_pool_size must be zero or greater")
 
     @property
     def workspace(self) -> Path:
@@ -45,6 +50,7 @@ class ServerSettings:
         load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
         state_root = os.environ.get("CODEX_OAUTH_API_STATE_ROOT")
         default_model = os.environ.get("CODEX_OAUTH_API_DEFAULT_MODEL")
+        thread_pool_size = os.environ.get("CODEX_OAUTH_API_THREAD_POOL_SIZE")
         api_key = os.environ.get("CODEX_OAUTH_API_KEY")
         allowed_ips = tuple(
             item.strip()
@@ -55,6 +61,7 @@ class ServerSettings:
         return cls(
             state_root=Path(state_root) if state_root is not None else Path.cwd() / ".codex-oauth-api-state",
             default_model=default_model if default_model is not None else "gpt-5.5",
+            thread_pool_size=int(thread_pool_size) if thread_pool_size is not None else 4,
             api_key=api_key,
             allowed_ips=allowed_ips,
             auto_login=auto_login,
@@ -75,6 +82,7 @@ class ChatCompletionRequest(BaseModel):
     model: str | None = None
     stream: bool = False
     reasoning_effort: str | None = None
+    service_tier: Literal["fast"] | None = None
 
 
 def _print_debug_log(
@@ -96,16 +104,54 @@ def _print_debug_log(
         record["client_ip"] = client_ip
     if status_code is not None:
         record["status_code"] = status_code
-    print(json.dumps(record, ensure_ascii=False, sort_keys=True))
+    print(json.dumps(record, ensure_ascii=False, sort_keys=True), flush=True)
+
+
+def _print_timing_log(phase: str, **durations_ms: float) -> None:
+    record = {
+        "event": "codex_oauth_api.timing",
+        "phase": phase,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    record.update({key: round(value, 3) for key, value in durations_ms.items()})
+    print(json.dumps(record, ensure_ascii=False, sort_keys=True), flush=True)
 
 
 def create_app(
     settings: ServerSettings | None = None,
     codex_client_factory: Callable[..., Any] | None = None,
+    codex_runtime_factory: Callable[..., Any] | None = None,
 ) -> FastAPI:
     settings = settings or ServerSettings()
+    isolated_settings = IsolatedCodexSettings(
+        state_root=settings.state_root,
+        cwd=settings.workspace,
+        base_instructions=ISOLATED_CODEX_BASE_INSTRUCTIONS,
+        pooled_model=settings.default_model,
+        thread_pool_size=settings.thread_pool_size,
+    )
+    runtime = None
+    if codex_client_factory is None:
+        runtime_factory = codex_runtime_factory or IsolatedCodexRuntime
+        runtime = runtime_factory(isolated_settings)
 
-    app = FastAPI(title="CodexOAuthAPI", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if runtime is not None:
+            runtime_started_at = time.perf_counter()
+            await run_in_threadpool(runtime.start)
+            if settings.debug:
+                _print_timing_log(
+                    "runtime_startup",
+                    duration_ms=(time.perf_counter() - runtime_started_at) * 1000,
+                )
+        try:
+            yield
+        finally:
+            if runtime is not None:
+                await run_in_threadpool(runtime.close)
+
+    app = FastAPI(title="CodexOAuthAPI", version="0.1.0", lifespan=lifespan)
 
     @app.middleware("http")
     async def enforce_v1_access_policy(request: Request, call_next):
@@ -178,6 +224,7 @@ def create_app(
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request, payload: ChatCompletionRequest):
+        request_started_at = time.perf_counter()
         debug_method = request.method
         debug_path = request.url.path
         if settings.debug:
@@ -232,13 +279,16 @@ def create_app(
             prompt_lines.append(f"{message.role}: {rendered}")
         prompt = "\n".join(prompt_lines)
 
-        isolated_settings = IsolatedCodexSettings(
-            state_root=settings.state_root,
-            cwd=settings.workspace,
-            base_instructions=ISOLATED_CODEX_BASE_INSTRUCTIONS,
-        )
-        factory = codex_client_factory or IsolatedCodexJSONClient
-        codex_client = factory(model, settings=isolated_settings, auto_login=settings.auto_login)
+        if codex_client_factory is not None:
+            codex_client = codex_client_factory(
+                model,
+                settings=isolated_settings,
+                auto_login=settings.auto_login,
+            )
+        else:
+            if runtime is None:
+                raise RuntimeError("Codex runtime is unavailable")
+            codex_client = runtime.create_client(model, auto_login=settings.auto_login)
 
         if payload.stream:
             def next_stream_delta(iterator):
@@ -246,30 +296,6 @@ def create_app(
                     return True, next(iterator)
                 except StopIteration:
                     return False, None
-
-            iterator = codex_client.stream_text(prompt, effort=payload.reasoning_effort)
-            try:
-                has_first_delta, first_delta = await run_in_threadpool(next_stream_delta, iterator)
-            except IsolatedCodexAuthenticationError:
-                response_body = {
-                    "error": {
-                        "message": "Codex OAuth login is required for this isolated API server state.",
-                        "type": "codex_authentication_required",
-                        "code": "codex_authentication_required",
-                    }
-                }
-                if settings.debug:
-                    _print_debug_log(
-                        "codex_oauth_api.response",
-                        method=debug_method,
-                        path=debug_path,
-                        status_code=503,
-                        body=response_body,
-                    )
-                return JSONResponse(
-                    status_code=503,
-                    content=response_body,
-                )
 
             role_chunk = {
                 "id": response_id,
@@ -312,27 +338,49 @@ def create_app(
                 print_stream_chunk_debug(role_chunk)
                 yield f"data: {json.dumps(role_chunk, ensure_ascii=False)}\n\n"
 
-                if has_first_delta and first_delta is not None:
-                    first_content_chunk = {
-                        "id": response_id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": model,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"content": first_delta},
-                                "finish_reason": None,
-                            }
-                        ],
-                    }
-                    print_stream_chunk_debug(first_content_chunk)
-                    yield f"data: {json.dumps(first_content_chunk, ensure_ascii=False)}\n\n"
-
+                iterator = codex_client.stream_text(
+                    prompt,
+                    effort=payload.reasoning_effort,
+                    service_tier=payload.service_tier,
+                )
+                model_started_at = time.perf_counter()
+                first_delta_received = False
                 while True:
-                    has_delta, delta = await run_in_threadpool(next_stream_delta, iterator)
+                    try:
+                        has_delta, delta = await run_in_threadpool(next_stream_delta, iterator)
+                    except IsolatedCodexAuthenticationError:
+                        error_body = {
+                            "error": {
+                                "message": "Codex OAuth login is required for this isolated API server state.",
+                                "type": "codex_authentication_required",
+                                "code": "codex_authentication_required",
+                            }
+                        }
+                        if settings.debug:
+                            _print_debug_log(
+                                "codex_oauth_api.response.chunk",
+                                method=debug_method,
+                                path=debug_path,
+                                status_code=200,
+                                body=error_body,
+                            )
+                            _print_timing_log(
+                                "completion",
+                                model_duration_ms=(time.perf_counter() - model_started_at) * 1000,
+                                total_duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                            )
+                        yield f"data: {json.dumps(error_body, ensure_ascii=False)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
                     if not has_delta:
                         break
+                    if not first_delta_received:
+                        first_delta_received = True
+                        if settings.debug:
+                            _print_timing_log(
+                                "first_token",
+                                duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                            )
                     content_chunk = {
                         "id": response_id,
                         "object": "chat.completion.chunk",
@@ -350,16 +398,24 @@ def create_app(
                     yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n"
 
                 print_stream_chunk_debug(stop_chunk)
+                if settings.debug:
+                    _print_timing_log(
+                        "completion",
+                        model_duration_ms=(time.perf_counter() - model_started_at) * 1000,
+                        total_duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                    )
                 yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
 
             return StreamingResponse(stream_events(), media_type="text/event-stream")
 
+        model_started_at = time.perf_counter()
         try:
             content = await run_in_threadpool(
                 codex_client.complete_text,
                 prompt,
                 effort=payload.reasoning_effort,
+                service_tier=payload.service_tier,
             )
         except IsolatedCodexAuthenticationError:
             response_body = {
@@ -376,6 +432,11 @@ def create_app(
                     path=debug_path,
                     status_code=503,
                     body=response_body,
+                )
+                _print_timing_log(
+                    "completion",
+                    model_duration_ms=(time.perf_counter() - model_started_at) * 1000,
+                    total_duration_ms=(time.perf_counter() - request_started_at) * 1000,
                 )
             return JSONResponse(
                 status_code=503,
@@ -407,6 +468,11 @@ def create_app(
                 path=debug_path,
                 status_code=200,
                 body=response_body,
+            )
+            _print_timing_log(
+                "completion",
+                model_duration_ms=(time.perf_counter() - model_started_at) * 1000,
+                total_duration_ms=(time.perf_counter() - request_started_at) * 1000,
             )
         return response_body
 

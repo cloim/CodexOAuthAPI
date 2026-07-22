@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from codex_oauth_api import cli
+from codex_oauth_api import server as server_module
 from codex_oauth_api.isolated_codex import ISOLATED_CODEX_BASE_INSTRUCTIONS, IsolatedCodexAuthenticationError
 from codex_oauth_api.server import ServerSettings, create_app
 
@@ -22,15 +23,31 @@ class FakeCodexClient:
         self.stream_chunks = stream_chunks if stream_chunks is not None else [response]
         self.calls: list[tuple[str, str | None]] = []
         self.stream_calls: list[tuple[str, str | None]] = []
+        self.service_tiers: list[str | None] = []
+        self.stream_service_tiers: list[str | None] = []
 
-    def complete_text(self, prompt: str, *, effort: str | None = None) -> str:
+    def complete_text(
+        self,
+        prompt: str,
+        *,
+        effort: str | None = None,
+        service_tier: str | None = None,
+    ) -> str:
         self.calls.append((prompt, effort))
+        self.service_tiers.append(service_tier)
         if self.error is not None:
             raise self.error
         return self.response
 
-    def stream_text(self, prompt: str, *, effort: str | None = None):
+    def stream_text(
+        self,
+        prompt: str,
+        *,
+        effort: str | None = None,
+        service_tier: str | None = None,
+    ):
         self.stream_calls.append((prompt, effort))
+        self.stream_service_tiers.append(service_tier)
         if self.error is not None:
             raise self.error
         yield from self.stream_chunks
@@ -64,6 +81,7 @@ def test_chat_completions_returns_openai_compatible_response_and_uses_isolated_s
                 {"role": "user", "content": "안녕?"},
             ],
             "reasoning_effort": "high",
+            "service_tier": "fast",
         },
     )
 
@@ -93,6 +111,7 @@ def test_chat_completions_returns_openai_compatible_response_and_uses_isolated_s
             "high",
         )
     ]
+    assert clients[0].service_tiers == ["fast"]
 
 
 def test_debug_mode_logs_chat_completion_request_and_response_without_auth_header(tmp_path: Path, capsys):
@@ -132,6 +151,12 @@ def test_debug_mode_logs_chat_completion_request_and_response_without_auth_heade
     assert log_entries[1]["path"] == "/v1/chat/completions"
     assert log_entries[1]["status_code"] == 200
     assert log_entries[1]["body"]["choices"][0]["message"] == {"role": "assistant", "content": "디버그 응답"}
+
+    timing_entry = next(entry for entry in log_entries if entry["event"] == "codex_oauth_api.timing")
+    assert timing_entry["phase"] == "completion"
+    assert timing_entry["timestamp"].endswith("Z")
+    assert timing_entry["model_duration_ms"] >= 0
+    assert timing_entry["total_duration_ms"] >= timing_entry["model_duration_ms"]
 
     raw_output = "\n".join(json.dumps(entry, ensure_ascii=False) for entry in log_entries)
     assert "Authorization" not in raw_output
@@ -175,6 +200,120 @@ def test_debug_mode_logs_streaming_response_chunks_as_they_are_emitted(tmp_path:
     assert chunk_logs[-1]["body"] == json.loads(chunks[-2])
 
 
+def test_streaming_logs_role_chunk_before_waiting_for_first_model_delta(tmp_path: Path, monkeypatch):
+    events = []
+
+    class OrderedStreamingClient(FakeCodexClient):
+        def stream_text(
+            self,
+            prompt: str,
+            *,
+            effort: str | None = None,
+            service_tier: str | None = None,
+        ):
+            events.append("model_delta")
+            yield "첫"
+
+    def capture_debug_log(event, **fields):
+        if event == "codex_oauth_api.response.chunk":
+            delta = fields["body"]["choices"][0]["delta"]
+            if delta == {"role": "assistant"}:
+                events.append("role_chunk")
+
+    monkeypatch.setattr(server_module, "_print_debug_log", capture_debug_log)
+    app = create_app(
+        ServerSettings(state_root=tmp_path / "state", debug=True),
+        lambda model, *, settings, auto_login: OrderedStreamingClient(),
+    )
+
+    with TestClient(app).stream(
+        "POST",
+        "/v1/chat/completions",
+        json={"stream": True, "messages": [{"role": "user", "content": "stream"}]},
+    ) as response:
+        lines = [line for line in response.iter_lines() if line]
+        assert lines[-1] == "data: [DONE]"
+
+    assert events[:2] == ["role_chunk", "model_delta"]
+
+
+def test_streaming_authentication_error_is_emitted_as_sse_error_after_stream_starts(tmp_path: Path):
+    app = create_app(
+        ServerSettings(state_root=tmp_path / "state"),
+        lambda model, *, settings, auto_login: FakeCodexClient(
+            error=IsolatedCodexAuthenticationError("Codex OAuth login is required")
+        ),
+    )
+
+    with TestClient(app).stream(
+        "POST",
+        "/v1/chat/completions",
+        json={"stream": True, "messages": [{"role": "user", "content": "stream"}]},
+    ) as response:
+        chunks = [line.removeprefix("data: ") for line in response.iter_lines() if line.startswith("data: ")]
+
+    assert response.status_code == 200
+    assert json.loads(chunks[0])["choices"][0]["delta"] == {"role": "assistant"}
+    assert json.loads(chunks[1]) == {
+        "error": {
+            "message": "Codex OAuth login is required for this isolated API server state.",
+            "type": "codex_authentication_required",
+            "code": "codex_authentication_required",
+        }
+    }
+    assert chunks[-1] == "[DONE]"
+
+
+def test_application_lifespan_starts_and_closes_shared_runtime_once(tmp_path: Path, capsys):
+    events = []
+    clients = []
+
+    class FakeRuntime:
+        def __init__(self, settings):
+            events.append(("init", settings.state_root))
+
+        def start(self):
+            events.append("start")
+
+        def create_client(self, model, *, auto_login):
+            events.append(("client", model, auto_login))
+            client = FakeCodexClient("공유 런타임 응답")
+            clients.append(client)
+            return client
+
+        def close(self):
+            events.append("close")
+
+    app = create_app(
+        ServerSettings(state_root=tmp_path / "state", auto_login=False, debug=True),
+        codex_runtime_factory=FakeRuntime,
+    )
+
+    with TestClient(app) as client:
+        for content in ["첫 요청", "둘째 요청"]:
+            response = client.post(
+                "/v1/chat/completions",
+                json={"messages": [{"role": "user", "content": content}]},
+            )
+            assert response.status_code == 200
+
+    assert events == [
+        ("init", tmp_path / "state"),
+        "start",
+        ("client", "gpt-5.5", False),
+        ("client", "gpt-5.5", False),
+        "close",
+    ]
+    assert [client.calls for client in clients] == [
+        [("user: 첫 요청", None)],
+        [("user: 둘째 요청", None)],
+    ]
+    log_entries = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    runtime_timing = next(entry for entry in log_entries if entry.get("phase") == "runtime_startup")
+    assert runtime_timing["duration_ms"] >= 0
+    assert runtime_timing["timestamp"].endswith("Z")
+
+
 def test_chat_completions_uses_default_model_when_request_model_is_omitted(tmp_path: Path):
     captured = []
 
@@ -215,6 +354,7 @@ def test_streaming_chat_completions_streams_codex_deltas_as_openai_sse_chunks(tm
             "messages": [{"role": "user", "content": "stream"}],
             "stream": True,
             "reasoning_effort": "minimal",
+            "service_tier": "fast",
         },
     ) as response:
         assert response.status_code == 200
@@ -233,6 +373,21 @@ def test_streaming_chat_completions_streams_codex_deltas_as_openai_sse_chunks(tm
     assert payloads[-1]["choices"][0]["finish_reason"] == "stop"
     assert clients[0].calls == []
     assert clients[0].stream_calls == [("user: stream", "minimal")]
+    assert clients[0].stream_service_tiers == ["fast"]
+
+
+def test_chat_completions_rejects_unsupported_service_tier(tmp_path: Path):
+    app = create_app(ServerSettings(state_root=tmp_path / "state"), lambda *args, **kwargs: FakeCodexClient())
+
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "안녕?"}],
+            "service_tier": "priority",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_server_settings_from_env_parses_allowed_ips(monkeypatch, tmp_path: Path):
@@ -240,10 +395,12 @@ def test_server_settings_from_env_parses_allowed_ips(monkeypatch, tmp_path: Path
     monkeypatch.setenv("CODEX_OAUTH_API_STATE_ROOT", str(tmp_path / "state"))
     monkeypatch.setenv("CODEX_OAUTH_API_ALLOWED_IPS", " 203.0.113.10,198.51.100.7,, 192.0.2.3 ")
     monkeypatch.setenv("CODEX_OAUTH_API_ALLOWED_IP", "10.0.0.1")
+    monkeypatch.setenv("CODEX_OAUTH_API_THREAD_POOL_SIZE", "6")
 
     settings = ServerSettings.from_env()
 
     assert settings.allowed_ips == ("203.0.113.10", "198.51.100.7", "192.0.2.3")
+    assert settings.thread_pool_size == 6
 
 
 def test_server_settings_from_env_defaults_allowed_ips_to_empty_tuple(monkeypatch, tmp_path: Path):
@@ -254,6 +411,7 @@ def test_server_settings_from_env_defaults_allowed_ips_to_empty_tuple(monkeypatc
     settings = ServerSettings.from_env()
 
     assert settings.allowed_ips == ()
+    assert settings.thread_pool_size == 4
 
 
 def test_server_settings_from_env_loads_dotenv_values(monkeypatch, tmp_path: Path):

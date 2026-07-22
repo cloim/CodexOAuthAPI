@@ -5,7 +5,7 @@ description = "OpenAI-compatible API server backed by an isolated Codex SDK clie
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "openai-codex>=0.1.0b2",
+    "openai-codex>=0.144.4",
     "fastapi>=0.124.0",
     "uvicorn>=0.38.0",
     "python-dotenv>=1.2.2",

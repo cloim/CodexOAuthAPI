@@ -54,6 +54,19 @@ curl.exe http://127.0.0.1:8000/v1/chat/completions `
   -d '{ "model": "gpt-5.5", "messages": [{ "role": "user", "content": "Hello from CodexOAuthAPI" }] }'
 ```
 
+Fast mode is selected per request. Standard `gpt-5.5` requests use the
+pre-created thread pool, while Fast requests bypass the pool and start a
+separate thread.
+
+```json
+{
+  "model": "gpt-5.5",
+  "service_tier": "fast",
+  "reasoning_effort": "low",
+  "messages": [{ "role": "user", "content": "Hello" }]
+}
+```
+
 ## Streaming
 
 Set `stream: true` to receive OpenAI-style SSE chunks:
@@ -87,6 +100,7 @@ directory. Values already set in the OS environment take precedence over `.env`.
 | `CODEX_OAUTH_API_ALLOWED_IPS` | Optional | Comma-separated direct client IP allowlist for `/v1/*` |
 | `CODEX_OAUTH_API_STATE_ROOT` | Optional | Isolated server state directory |
 | `CODEX_OAUTH_API_DEFAULT_MODEL` | Optional | Model listed by `/v1/models` and used when omitted |
+| `CODEX_OAUTH_API_THREAD_POOL_SIZE` | Optional | Pre-created standard-tier threads for the default model; defaults to `4` |
 | `CODEX_OAUTH_API_AUTO_LOGIN` | Optional | Set to `true` to allow request-triggered device login |
 
 Notes:
@@ -147,6 +161,11 @@ uv run codex-oauth-api serve --host 127.0.0.1 --port 8000 --debug
 
 Debug request logs include `client_ip`, method, path, and body. They do not log
 the `Authorization` header or bearer token.
+
+The server initializes one Codex runtime at startup and closes it at shutdown.
+Each request uses an independent ephemeral thread on that shared runtime.
+`codex_oauth_api.timing` records include a UTC `timestamp` and millisecond timing
+for the `runtime_startup`, `first_token`, and `completion` phases.
 
 ## Tests
 
