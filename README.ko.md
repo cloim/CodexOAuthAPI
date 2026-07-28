@@ -98,6 +98,7 @@ CodexOAuthAPI는 현재 작업 디렉터리의 `.env` 파일을 읽습니다. �
 | `CODEX_OAUTH_API_KEY` | 선택 | 설정 시 `/v1/*`에 필요한 Bearer 키 |
 | `CODEX_OAUTH_API_ALLOWED_IPS` | 선택 | `/v1/*` 호출을 허용할 직접 접속 IP 목록 |
 | `CODEX_OAUTH_API_STATE_ROOT` | 선택 | 격리된 서버 상태 디렉터리 |
+| `CODEX_OAUTH_API_HOST` | 선택 | `serve`가 바인딩할 호스트, 기본값 `127.0.0.1` |
 | `CODEX_OAUTH_API_DEFAULT_MODEL` | 선택 | `/v1/models`에 표시되고 요청에서 생략 시 사용할 모델 |
 | `CODEX_OAUTH_API_THREAD_POOL_SIZE` | 선택 | 기본 모델의 일반 tier용 사전 생성 스레드 수, 기본값 `4` |
 | `CODEX_OAUTH_API_AUTO_LOGIN` | 선택 | `true`면 요청 중 Codex 401 발생 시 device login 허용 |
@@ -147,6 +148,59 @@ IP는 `403`, Bearer 값 누락 또는 불일치는 `401`을 받습니다.
 
 ```powershell
 .codex-oauth-api-state
+```
+
+## Docker
+
+배포 이미지는 `cloim/codex-oauth-api`(`linux/amd64`)입니다. 상태는 `/state`에
+저장되므로, 볼륨이나 호스트 디렉터리를 마운트하면 재시작 후에도 Codex OAuth
+세션이 유지됩니다.
+
+```powershell
+docker volume create codex-oauth-api-state
+docker run -it --rm -v codex-oauth-api-state:/state cloim/codex-oauth-api:0.1.0 login
+docker run -d --name codex-oauth-api -p 8000:8000 `
+  -e CODEX_OAUTH_API_KEY=replace-with-generated-key `
+  -v codex-oauth-api-state:/state `
+  cloim/codex-oauth-api:0.1.0
+```
+
+컨테이너 작업 디렉터리가 `/state`이므로, 마운트한 디렉터리에 `.env`를 두면
+그대로 로드됩니다.
+
+```powershell
+docker run -it --rm -v D:\DockerData\codex-oauth-api:/state cloim/codex-oauth-api:0.1.0 login
+docker run -d --name codex-oauth-api -p 9200:8000 `
+  -v D:\DockerData\codex-oauth-api:/state `
+  cloim/codex-oauth-api:0.1.0
+```
+
+```env
+CODEX_OAUTH_API_KEY=replace-with-generated-key
+```
+
+이 `.env`에는 `CODEX_OAUTH_API_STATE_ROOT`를 넣지 않으시면 됩니다. 이미지가 이미
+`/state`로 지정해 둡니다. 이미지는 `CODEX_OAUTH_API_HOST=0.0.0.0`을 설정하고 OS
+환경변수가 `.env`보다 우선하므로, 바인드 호스트를 바꾸실 때는 `-e`를 사용해
+주세요. 컨테이너는 항상 `8000` 포트로 수신하므로, 공개 포트는
+`-p <호스트-포트>:8000` 형태로 고르시면 됩니다.
+
+이미지는 `serve --debug`로 실행되므로 요청/응답 본문이 `docker logs`에
+남습니다.
+
+```powershell
+docker logs -f codex-oauth-api
+```
+
+컨테이너는 모든 인터페이스에서 수신하므로 `CODEX_OAUTH_API_KEY`를 함께 설정해
+두시면 안전합니다. `CODEX_OAUTH_API_ALLOWED_IPS`는 컨테이너 네트워크의 출발지
+주소를 보므로, 사용하실 때는 `127.0.0.1` 대신 Docker 게이트웨이 주소를 넣어
+주세요.
+
+로컬 빌드는 다음과 같습니다.
+
+```powershell
+docker build -t cloim/codex-oauth-api:0.1.0 .
 ```
 
 ## 디버깅

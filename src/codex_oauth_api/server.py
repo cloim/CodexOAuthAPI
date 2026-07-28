@@ -34,6 +34,7 @@ class ServerSettings:
     allowed_ips: tuple[str, ...] = ()
     auto_login: bool = False
     debug: bool = False
+    host: str = "127.0.0.1"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "state_root", Path(self.state_root))
@@ -58,6 +59,7 @@ class ServerSettings:
             if item.strip()
         )
         auto_login = os.environ.get("CODEX_OAUTH_API_AUTO_LOGIN") == "true"
+        host = os.environ.get("CODEX_OAUTH_API_HOST")
         return cls(
             state_root=Path(state_root) if state_root is not None else Path.cwd() / ".codex-oauth-api-state",
             default_model=default_model if default_model is not None else "gpt-5.5",
@@ -65,6 +67,7 @@ class ServerSettings:
             api_key=api_key,
             allowed_ips=allowed_ips,
             auto_login=auto_login,
+            host=host if host is not None else "127.0.0.1",
         )
 
 

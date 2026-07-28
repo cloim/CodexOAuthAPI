@@ -720,3 +720,58 @@ def test_cli_serve_debug_enables_debug_logging_setting(tmp_path: Path, monkeypat
     assert captured["settings"].state_root == tmp_path / "state"
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 9999
+
+
+def test_server_settings_from_env_reads_host(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEX_OAUTH_API_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setenv("CODEX_OAUTH_API_HOST", "0.0.0.0")
+
+    settings = ServerSettings.from_env()
+
+    assert settings.host == "0.0.0.0"
+
+
+def test_server_settings_from_env_defaults_host(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEX_OAUTH_API_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.delenv("CODEX_OAUTH_API_HOST", raising=False)
+
+    settings = ServerSettings.from_env()
+
+    assert settings.host == "127.0.0.1"
+
+
+def test_cli_serve_uses_host_from_environment_with_default_port(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEX_OAUTH_API_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setenv("CODEX_OAUTH_API_HOST", "0.0.0.0")
+    captured = {}
+
+    monkeypatch.setattr(cli, "create_app", lambda settings: object())
+    monkeypatch.setattr(
+        cli.uvicorn,
+        "run",
+        lambda app, *, host, port: captured.update({"host": host, "port": port}),
+    )
+
+    assert cli.main(["serve"]) == 0
+    assert captured == {"host": "0.0.0.0", "port": 8000}
+
+
+def test_cli_serve_command_line_overrides_environment_host(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEX_OAUTH_API_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setenv("CODEX_OAUTH_API_HOST", "0.0.0.0")
+    captured = {}
+
+    monkeypatch.setattr(cli, "create_app", lambda settings: object())
+    monkeypatch.setattr(
+        cli.uvicorn,
+        "run",
+        lambda app, *, host, port: captured.update({"host": host, "port": port}),
+    )
+
+    assert cli.main(["serve", "--host", "127.0.0.1", "--port", "9999"]) == 0
+    assert captured == {"host": "127.0.0.1", "port": 9999}
+

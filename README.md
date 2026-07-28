@@ -99,6 +99,7 @@ directory. Values already set in the OS environment take precedence over `.env`.
 | `CODEX_OAUTH_API_KEY` | Optional | Bearer token required for `/v1/*` when set |
 | `CODEX_OAUTH_API_ALLOWED_IPS` | Optional | Comma-separated direct client IP allowlist for `/v1/*` |
 | `CODEX_OAUTH_API_STATE_ROOT` | Optional | Isolated server state directory |
+| `CODEX_OAUTH_API_HOST` | Optional | Bind host used by `serve`; defaults to `127.0.0.1` |
 | `CODEX_OAUTH_API_DEFAULT_MODEL` | Optional | Model listed by `/v1/models` and used when omitted |
 | `CODEX_OAUTH_API_THREAD_POOL_SIZE` | Optional | Pre-created standard-tier threads for the default model; defaults to `4` |
 | `CODEX_OAUTH_API_AUTO_LOGIN` | Optional | Set to `true` to allow request-triggered device login |
@@ -149,6 +150,58 @@ Default state root:
 
 ```powershell
 .codex-oauth-api-state
+```
+
+## Docker
+
+The published image is `cloim/codex-oauth-api` (`linux/amd64`). State lives in
+`/state`, so mount a volume or a host directory to keep the Codex OAuth session
+across restarts.
+
+```powershell
+docker volume create codex-oauth-api-state
+docker run -it --rm -v codex-oauth-api-state:/state cloim/codex-oauth-api:0.1.0 login
+docker run -d --name codex-oauth-api -p 8000:8000 `
+  -e CODEX_OAUTH_API_KEY=replace-with-generated-key `
+  -v codex-oauth-api-state:/state `
+  cloim/codex-oauth-api:0.1.0
+```
+
+The container working directory is `/state`, so a `.env` file placed inside the
+mounted directory is loaded automatically:
+
+```powershell
+docker run -it --rm -v D:\DockerData\codex-oauth-api:/state cloim/codex-oauth-api:0.1.0 login
+docker run -d --name codex-oauth-api -p 9200:8000 `
+  -v D:\DockerData\codex-oauth-api:/state `
+  cloim/codex-oauth-api:0.1.0
+```
+
+```env
+CODEX_OAUTH_API_KEY=replace-with-generated-key
+```
+
+Keep `CODEX_OAUTH_API_STATE_ROOT` out of that `.env`; the image already points it
+at `/state`. The image sets `CODEX_OAUTH_API_HOST=0.0.0.0`, and OS environment
+values take precedence over `.env`, so change the bind host with `-e` when
+needed. The container always listens on port `8000`, so choose the published port
+with `-p <host-port>:8000`.
+
+The image runs `serve --debug`, so request and response bodies appear in
+`docker logs`:
+
+```powershell
+docker logs -f codex-oauth-api
+```
+
+Because the container listens on all interfaces, keep `CODEX_OAUTH_API_KEY` set.
+`CODEX_OAUTH_API_ALLOWED_IPS` sees the container network source address, so list
+the Docker gateway address rather than `127.0.0.1` when you use it.
+
+Build the image locally with:
+
+```powershell
+docker build -t cloim/codex-oauth-api:0.1.0 .
 ```
 
 ## Debugging

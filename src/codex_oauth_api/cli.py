@@ -14,8 +14,8 @@ from .server import ServerSettings, create_app
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the isolated Codex OpenAI-compatible API server.")
     parser.add_argument("command", nargs="?", choices=("serve", "login", "generate-key"), default="serve")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--host", default=None, help="Bind host. Defaults to CODEX_OAUTH_API_HOST.")
+    parser.add_argument("--port", type=int, default=8000, help="Bind port.")
     parser.add_argument("--debug", action="store_true", help="Print request and response bodies to the console.")
     args = parser.parse_args(argv)
 
@@ -26,6 +26,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = ServerSettings.from_env()
     if args.debug:
         settings = replace(settings, debug=True)
+    if args.host is not None:
+        settings = replace(settings, host=args.host)
     if args.command == "login":
         login_settings = IsolatedCodexSettings(
             state_root=settings.state_root,
@@ -42,7 +44,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Login state stored under: {settings.state_root}")
         return 0 if result.user_code else 1
 
-    uvicorn.run(create_app(settings), host=args.host, port=args.port)
+    uvicorn.run(create_app(settings), host=settings.host, port=args.port)
     return 0
 
 
