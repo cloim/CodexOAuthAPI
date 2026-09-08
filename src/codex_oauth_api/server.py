@@ -120,6 +120,14 @@ def _print_timing_log(phase: str, **durations_ms: float) -> None:
     print(json.dumps(record, ensure_ascii=False, sort_keys=True), flush=True)
 
 
+def _map_codex_runtime_error(error: RuntimeError) -> tuple[int, str, str]:
+    message = str(error)
+    lower = message.lower()
+    if any(keyword in lower for keyword in ("usage limit", "rate limit", "too many requests", "purchase more credits", "quota")):
+        return 429, "insufficient_quota", "requests"
+    return 500, "internal_error", "server_error"
+
+
 def create_app(
     settings: ServerSettings | None = None,
     codex_client_factory: Callable[..., Any] | None = None,
@@ -375,6 +383,31 @@ def create_app(
                         yield f"data: {json.dumps(error_body, ensure_ascii=False)}\n\n"
                         yield "data: [DONE]\n\n"
                         return
+                    except RuntimeError as error:
+                        _, error_code, error_type = _map_codex_runtime_error(error)
+                        error_body = {
+                            "error": {
+                                "message": str(error),
+                                "type": error_type,
+                                "code": error_code,
+                            }
+                        }
+                        if settings.debug:
+                            _print_debug_log(
+                                "codex_oauth_api.response.chunk",
+                                method=debug_method,
+                                path=debug_path,
+                                status_code=200,
+                                body=error_body,
+                            )
+                            _print_timing_log(
+                                "completion",
+                                model_duration_ms=(time.perf_counter() - model_started_at) * 1000,
+                                total_duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                            )
+                        yield f"data: {json.dumps(error_body, ensure_ascii=False)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
                     if not has_delta:
                         break
                     if not first_delta_received:
@@ -443,6 +476,32 @@ def create_app(
                 )
             return JSONResponse(
                 status_code=503,
+                content=response_body,
+            )
+        except RuntimeError as error:
+            status_code, error_code, error_type = _map_codex_runtime_error(error)
+            response_body = {
+                "error": {
+                    "message": str(error),
+                    "type": error_type,
+                    "code": error_code,
+                }
+            }
+            if settings.debug:
+                _print_debug_log(
+                    "codex_oauth_api.response",
+                    method=debug_method,
+                    path=debug_path,
+                    status_code=status_code,
+                    body=response_body,
+                )
+                _print_timing_log(
+                    "completion",
+                    model_duration_ms=(time.perf_counter() - model_started_at) * 1000,
+                    total_duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                )
+            return JSONResponse(
+                status_code=status_code,
                 content=response_body,
             )
 

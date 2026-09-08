@@ -775,3 +775,43 @@ def test_cli_serve_command_line_overrides_environment_host(tmp_path: Path, monke
     assert cli.main(["serve", "--host", "127.0.0.1", "--port", "9999"]) == 0
     assert captured == {"host": "127.0.0.1", "port": 9999}
 
+
+def test_chat_completions_returns_429_on_usage_limit_runtime_error(tmp_path: Path):
+    usage_error = RuntimeError("You've hit your usage limit. Upgrade to Pro, visit ... or try again at 3:52 AM.")
+    app = create_app(
+        ServerSettings(state_root=tmp_path / "state"),
+        lambda *args, **kwargs: FakeCodexClient(error=usage_error),
+    )
+
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "안녕?"}]},
+    )
+
+    assert response.status_code == 429
+    body = response.json()
+    assert body["error"]["code"] == "insufficient_quota"
+    assert "usage limit" in body["error"]["message"].lower()
+
+
+def test_streaming_chat_completions_returns_insufficient_quota_on_usage_limit(tmp_path: Path):
+    usage_error = RuntimeError("You've hit your usage limit. Upgrade to Pro, visit ... or try again at 3:52 AM.")
+    app = create_app(
+        ServerSettings(state_root=tmp_path / "state"),
+        lambda *args, **kwargs: FakeCodexClient(error=usage_error),
+    )
+
+    with TestClient(app).stream(
+        "POST",
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "안녕?"}], "stream": True},
+    ) as response:
+        assert response.status_code == 200
+        chunks = [line.removeprefix("data: ") for line in response.iter_lines() if line.startswith("data: ")]
+
+    assert chunks[-1] == "[DONE]"
+    error_payload = json.loads(chunks[-2])
+    assert error_payload["error"]["code"] == "insufficient_quota"
+    assert "usage limit" in error_payload["error"]["message"].lower()
+
+
