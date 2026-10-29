@@ -5,10 +5,26 @@ import secrets
 from collections.abc import Sequence
 from dataclasses import replace
 
+import copy
+from typing import Any
+
 import uvicorn
+from uvicorn.config import LOGGING_CONFIG
 
 from .isolated_codex import CodexOAuthLogin, ISOLATED_CODEX_BASE_INSTRUCTIONS, IsolatedCodexSettings
 from .server import ServerSettings, create_app
+
+def build_log_config() -> dict[str, Any]:
+    config = copy.deepcopy(LOGGING_CONFIG)
+    time_format = "%Y-%m-%d %H:%M:%S"
+    config["formatters"]["default"]["fmt"] = "%(asctime)s %(levelprefix)s %(message)s"
+    config["formatters"]["default"]["datefmt"] = time_format
+    config["formatters"]["access"]["fmt"] = (
+        '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+    )
+    config["formatters"]["access"]["datefmt"] = time_format
+    return config
+
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -44,7 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Login state stored under: {settings.state_root}")
         return 0 if result.user_code else 1
 
-    uvicorn.run(create_app(settings), host=settings.host, port=args.port)
+    uvicorn.run(create_app(settings), host=settings.host, port=args.port, log_config=build_log_config())
     return 0
 
 

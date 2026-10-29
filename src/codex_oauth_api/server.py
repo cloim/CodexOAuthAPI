@@ -114,7 +114,7 @@ def _print_timing_log(phase: str, **durations_ms: float) -> None:
     record = {
         "event": "codex_oauth_api.timing",
         "phase": phase,
-        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "timestamp": datetime.now().astimezone().isoformat(),
     }
     record.update({key: round(value, 3) for key, value in durations_ms.items()})
     print(json.dumps(record, ensure_ascii=False, sort_keys=True), flush=True)

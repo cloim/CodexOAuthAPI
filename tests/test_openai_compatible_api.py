@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
 
@@ -154,7 +155,9 @@ def test_debug_mode_logs_chat_completion_request_and_response_without_auth_heade
 
     timing_entry = next(entry for entry in log_entries if entry["event"] == "codex_oauth_api.timing")
     assert timing_entry["phase"] == "completion"
-    assert timing_entry["timestamp"].endswith("Z")
+    parsed_timestamp = datetime.fromisoformat(timing_entry["timestamp"])
+    assert parsed_timestamp.tzinfo is not None
+    assert parsed_timestamp.utcoffset() == datetime.now().astimezone().utcoffset()
     assert timing_entry["model_duration_ms"] >= 0
     assert timing_entry["total_duration_ms"] >= timing_entry["model_duration_ms"]
 
@@ -311,7 +314,9 @@ def test_application_lifespan_starts_and_closes_shared_runtime_once(tmp_path: Pa
     log_entries = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     runtime_timing = next(entry for entry in log_entries if entry.get("phase") == "runtime_startup")
     assert runtime_timing["duration_ms"] >= 0
-    assert runtime_timing["timestamp"].endswith("Z")
+    parsed_runtime_timestamp = datetime.fromisoformat(runtime_timing["timestamp"])
+    assert parsed_runtime_timestamp.tzinfo is not None
+    assert parsed_runtime_timestamp.utcoffset() == datetime.now().astimezone().utcoffset()
 
 
 def test_chat_completions_uses_default_model_when_request_model_is_omitted(tmp_path: Path):
@@ -707,7 +712,8 @@ def test_cli_serve_debug_enables_debug_logging_setting(tmp_path: Path, monkeypat
         captured["settings"] = settings
         return object()
 
-    def fake_run(app, *, host, port):
+    def fake_run(app, *, host, port, **kwargs):
+        captured["log_config"] = kwargs.get("log_config")
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
@@ -720,6 +726,7 @@ def test_cli_serve_debug_enables_debug_logging_setting(tmp_path: Path, monkeypat
     assert captured["settings"].state_root == tmp_path / "state"
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 9999
+    assert captured["log_config"] is not None
 
 
 def test_server_settings_from_env_reads_host(monkeypatch, tmp_path: Path):
@@ -752,7 +759,7 @@ def test_cli_serve_uses_host_from_environment_with_default_port(tmp_path: Path, 
     monkeypatch.setattr(
         cli.uvicorn,
         "run",
-        lambda app, *, host, port: captured.update({"host": host, "port": port}),
+        lambda app, *, host, port, **kwargs: captured.update({"host": host, "port": port}),
     )
 
     assert cli.main(["serve"]) == 0
@@ -769,7 +776,7 @@ def test_cli_serve_command_line_overrides_environment_host(tmp_path: Path, monke
     monkeypatch.setattr(
         cli.uvicorn,
         "run",
-        lambda app, *, host, port: captured.update({"host": host, "port": port}),
+        lambda app, *, host, port, **kwargs: captured.update({"host": host, "port": port}),
     )
 
     assert cli.main(["serve", "--host", "127.0.0.1", "--port", "9999"]) == 0
@@ -813,5 +820,13 @@ def test_streaming_chat_completions_returns_insufficient_quota_on_usage_limit(tm
     error_payload = json.loads(chunks[-2])
     assert error_payload["error"]["code"] == "insufficient_quota"
     assert "usage limit" in error_payload["error"]["message"].lower()
+
+
+def test_build_log_config_includes_locale_time_format():
+    config = cli.build_log_config()
+    assert "%(asctime)s" in config["formatters"]["default"]["fmt"]
+    assert config["formatters"]["default"]["datefmt"] == "%Y-%m-%d %H:%M:%S"
+    assert "%(asctime)s" in config["formatters"]["access"]["fmt"]
+    assert config["formatters"]["access"]["datefmt"] == "%Y-%m-%d %H:%M:%S"
 
 
