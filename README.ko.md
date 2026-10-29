@@ -152,17 +152,29 @@ IP는 `403`, Bearer 값 누락 또는 불일치는 `401`을 받습니다.
 
 ## Docker
 
-배포 이미지는 `cloim/codex-oauth-api`(`linux/amd64`)입니다. 상태는 `/state`에
-저장되므로, 볼륨이나 호스트 디렉터리를 마운트하면 재시작 후에도 Codex OAuth
-세션이 유지됩니다.
+운영 환경에서는 Docker Compose를 통해 상시 가동할 수 있습니다.
+
+```powershell
+# 컨테이너 빌드 및 백그라운드 실행
+docker compose up -d
+
+# 로그 확인
+docker compose logs -f
+
+# 서비스 중지
+docker compose down
+```
+
+수동 실행 또는 별도 배포 시에는 아래와 같이 네임드 볼륨을 사용할 수 있습니다. 상태는 `/state`에
+저장되므로, 볼륨을 마운트하면 재시작 후에도 Codex OAuth 세션이 유지됩니다.
 
 ```powershell
 docker volume create codex-oauth-api-state
-docker run -it --rm -v codex-oauth-api-state:/state cloim/codex-oauth-api:0.1.0 login
-docker run -d --name codex-oauth-api -p 8000:8000 `
+docker run -it --rm -v codex-oauth-api-state:/state codex-oauth-api:latest login
+docker run -d --name codex-oauth-api -p 47340:8000 `
   -e CODEX_OAUTH_API_KEY=replace-with-generated-key `
   -v codex-oauth-api-state:/state `
-  cloim/codex-oauth-api:0.1.0
+  codex-oauth-api:latest
 ```
 
 컨테이너 작업 디렉터리가 `/state`이므로, 마운트한 디렉터리에 `.env`를 두면

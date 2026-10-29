@@ -154,17 +154,28 @@ Default state root:
 
 ## Docker
 
-The published image is `cloim/codex-oauth-api` (`linux/amd64`). State lives in
-`/state`, so mount a volume or a host directory to keep the Codex OAuth session
-across restarts.
+For production deployments, you can run the service with Docker Compose.
+
+```powershell
+# Build and run in background
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Stop the service
+docker compose down
+```
+
+For manual execution, a named volume preserves the Codex OAuth session across restarts:
 
 ```powershell
 docker volume create codex-oauth-api-state
-docker run -it --rm -v codex-oauth-api-state:/state cloim/codex-oauth-api:0.1.0 login
-docker run -d --name codex-oauth-api -p 8000:8000 `
+docker run -it --rm -v codex-oauth-api-state:/state codex-oauth-api:latest login
+docker run -d --name codex-oauth-api -p 47340:8000 `
   -e CODEX_OAUTH_API_KEY=replace-with-generated-key `
   -v codex-oauth-api-state:/state `
-  cloim/codex-oauth-api:0.1.0
+  codex-oauth-api:latest
 ```
 
 The container working directory is `/state`, so a `.env` file placed inside the
