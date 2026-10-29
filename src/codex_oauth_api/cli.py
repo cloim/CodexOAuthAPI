@@ -33,6 +33,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--host", default=None, help="Bind host. Defaults to CODEX_OAUTH_API_HOST.")
     parser.add_argument("--port", type=int, default=8000, help="Bind port.")
     parser.add_argument("--debug", action="store_true", help="Print request and response bodies to the console.")
+    parser.add_argument("--timing", action="store_true", help="Print timing logs without request or response bodies.")
     args = parser.parse_args(argv)
 
     if args.command == "generate-key":
@@ -42,6 +43,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = ServerSettings.from_env()
     if args.debug:
         settings = replace(settings, debug=True)
+    if args.timing:
+        settings = replace(settings, timing=True)
     if args.host is not None:
         settings = replace(settings, host=args.host)
     if args.command == "login":

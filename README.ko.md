@@ -102,11 +102,23 @@ CodexOAuthAPI는 현재 작업 디렉터리의 `.env` 파일을 읽습니다. �
 | `CODEX_OAUTH_API_DEFAULT_MODEL` | 선택 | 요청에서 생략 시 사용할 모델, Codex 모델 조회 실패 시 `/v1/models`에 표시 |
 | `CODEX_OAUTH_API_THREAD_POOL_SIZE` | 선택 | 기본 모델의 일반 tier용 사전 생성 스레드 수, 기본값 `4` |
 | `CODEX_OAUTH_API_AUTO_LOGIN` | 선택 | `true`면 요청 중 Codex 401 발생 시 device login 허용 |
+| `CODEX_OAUTH_API_SECONDARY_POOL_SIZE` | 선택 | 기본 모델 외 모델이나 `fast` tier별 사전 생성 스레드 수, 첫 사용 시 생성, 기본값 `1` |
+| `CODEX_OAUTH_API_TURN_TIMEOUT_SECONDS` | 선택 | 이 시간이 지나면 턴을 중단하고 `504`(스트림은 `turn_timeout` SSE 오류) 반환, `0`이면 해제, 기본값 `600` |
+| `CODEX_OAUTH_API_MAX_CONCURRENT_REQUESTS` | 선택 | 동시에 처리할 chat completions 수, `0`이면 제한 해제, 기본값 `8` |
+| `CODEX_OAUTH_API_MAX_QUEUED_REQUESTS` | 선택 | 빈 슬롯을 기다릴 수 있는 요청 수, 초과 시 `429 server_overloaded`, 기본값 `32` |
+| `CODEX_OAUTH_API_STREAM_HEARTBEAT_SECONDS` | 선택 | 토큰 대기 중 SSE `: ping` 주석 전송 간격, `0`이면 해제, 기본값 `15` |
+| `CODEX_OAUTH_API_MODELS_CACHE_TTL_SECONDS` | 선택 | `/v1/models` 목록 캐시 시간, 기본값 `300` |
+| `CODEX_OAUTH_API_TRUSTED_PROXIES` | 선택 | `X-Forwarded-For` 헤더를 신뢰할 프록시 IP 목록 |
+| `CODEX_OAUTH_API_TIMING_LOG` | 선택 | `true`면 본문 없이 timing 로그만 출력(`--timing`과 동일) |
 
 참고:
 
-- `CODEX_OAUTH_API_ALLOWED_IPS`는 `request.client.host`와 정확히 비교합니다.
-- `X-Forwarded-For` 같은 forwarded header는 신뢰하지 않습니다.
+- `CODEX_OAUTH_API_ALLOWED_IPS`는 클라이언트 IP와 정확히 비교합니다. 기본값은
+  `request.client.host`이며, 직접 접속한 주소가 `CODEX_OAUTH_API_TRUSTED_PROXIES`에
+  있을 때만 `X-Forwarded-For`에서 신뢰 프록시가 아닌 가장 오른쪽 주소를 사용합니다.
+- 스트림 도중 클라이언트 연결이 끊기면 Codex 턴을 중단하여 사용량 소모를 멈춥니다.
+- Codex 프로세스가 종료되면 다음 요청이나 `/health` 호출 시 자동으로 재시작합니다.
+  재시작에 실패하는 동안 `/health`는 `503`을 반환합니다.
 - `CODEX_OAUTH_API_AUTO_LOGIN` 기본값은 `false`입니다.
 - 실제 `.env` 파일은 git에 올라가지 않도록 ignore됩니다.
 
@@ -197,8 +209,8 @@ CODEX_OAUTH_API_KEY=replace-with-generated-key
 주세요. 컨테이너는 항상 `8000` 포트로 수신하므로, 공개 포트는
 `-p <호스트-포트>:8000` 형태로 고르시면 됩니다.
 
-이미지는 `serve --debug`로 실행되므로 요청/응답 본문이 `docker logs`에
-남습니다.
+이미지는 `serve --timing`으로 실행되므로 `docker logs`에는 요청/응답 본문 없이
+timing 로그만 남습니다. 디버깅할 때만 명령을 `serve --debug`로 바꿔 실행해 주세요.
 
 ```powershell
 docker logs -f codex-oauth-api
@@ -229,7 +241,7 @@ debug 요청 로그에는 `client_ip`, method, path, body가 포함됩니다. `A
 서버는 시작할 때 Codex 런타임을 한 번 초기화하고 종료할 때 닫습니다. 각 요청은
 공유 런타임에서 독립적인 ephemeral thread를 사용합니다. `codex_oauth_api.timing`
 로그에는 UTC `timestamp`와 `runtime_startup`, `first_token`, `completion` 단계의
-밀리초 단위 시간이 기록됩니다.
+밀리초 단위 시간이 기록됩니다. `--timing`으로 실행하면 이 timing 로그만 출력합니다.
 
 ## 테스트
 

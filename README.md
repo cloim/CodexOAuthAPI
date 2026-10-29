@@ -103,11 +103,25 @@ directory. Values already set in the OS environment take precedence over `.env`.
 | `CODEX_OAUTH_API_DEFAULT_MODEL` | Optional | Model used when omitted and listed by `/v1/models` if Codex model lookup fails |
 | `CODEX_OAUTH_API_THREAD_POOL_SIZE` | Optional | Pre-created standard-tier threads for the default model; defaults to `4` |
 | `CODEX_OAUTH_API_AUTO_LOGIN` | Optional | Set to `true` to allow request-triggered device login |
+| `CODEX_OAUTH_API_SECONDARY_POOL_SIZE` | Optional | Pre-created threads per other model or `fast` tier, created on first use; defaults to `1` |
+| `CODEX_OAUTH_API_TURN_TIMEOUT_SECONDS` | Optional | Interrupts a turn and returns `504` (or a `turn_timeout` SSE error) after this many seconds; `0` disables; defaults to `600` |
+| `CODEX_OAUTH_API_MAX_CONCURRENT_REQUESTS` | Optional | Concurrent chat completions; `0` disables the limit; defaults to `8` |
+| `CODEX_OAUTH_API_MAX_QUEUED_REQUESTS` | Optional | Requests that may wait for a free slot before `429 server_overloaded`; defaults to `32` |
+| `CODEX_OAUTH_API_STREAM_HEARTBEAT_SECONDS` | Optional | Interval of SSE `: ping` comments while waiting for tokens; `0` disables; defaults to `15` |
+| `CODEX_OAUTH_API_MODELS_CACHE_TTL_SECONDS` | Optional | Cache lifetime of the `/v1/models` list; defaults to `300` |
+| `CODEX_OAUTH_API_TRUSTED_PROXIES` | Optional | Comma-separated proxy IPs whose `X-Forwarded-For` header is trusted |
+| `CODEX_OAUTH_API_TIMING_LOG` | Optional | Set to `true` to print timing logs without bodies (same as `--timing`) |
 
 Notes:
 
-- `CODEX_OAUTH_API_ALLOWED_IPS` matches `request.client.host` exactly.
-- `X-Forwarded-For` and other forwarded headers are not trusted.
+- `CODEX_OAUTH_API_ALLOWED_IPS` matches the client IP exactly. The client IP is
+  `request.client.host`, unless that peer is listed in
+  `CODEX_OAUTH_API_TRUSTED_PROXIES`. In that case, the right-most
+  `X-Forwarded-For` hop that is not a trusted proxy is used.
+- Clients that disconnect from a stream interrupt the Codex turn, so the turn
+  stops using quota.
+- If the Codex process exits, the next request or `/health` call restarts it.
+  `/health` returns `503` while the restart fails.
 - `CODEX_OAUTH_API_AUTO_LOGIN` defaults to `false` so API requests do not block
   on an interactive login flow.
 - Real `.env` files are ignored by git.
@@ -198,8 +212,9 @@ values take precedence over `.env`, so change the bind host with `-e` when
 needed. The container always listens on port `8000`, so choose the published port
 with `-p <host-port>:8000`.
 
-The image runs `serve --debug`, so request and response bodies appear in
-`docker logs`:
+The image runs `serve --timing`, so `docker logs` shows timing records without
+request or response bodies. Override the command with `serve --debug` only while
+debugging:
 
 ```powershell
 docker logs -f codex-oauth-api
@@ -229,7 +244,8 @@ the `Authorization` header or bearer token.
 The server initializes one Codex runtime at startup and closes it at shutdown.
 Each request uses an independent ephemeral thread on that shared runtime.
 `codex_oauth_api.timing` records include a UTC `timestamp` and millisecond timing
-for the `runtime_startup`, `first_token`, and `completion` phases.
+for the `runtime_startup`, `first_token`, and `completion` phases. Use
+`--timing` to print only these timing records.
 
 ## Tests
 

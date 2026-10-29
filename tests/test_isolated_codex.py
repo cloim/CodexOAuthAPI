@@ -24,18 +24,13 @@ class FakeThread:
     def __init__(self, response: str):
         self.response = response
         self.prompts: list[str] = []
-        self.run_kwargs: list[dict] = []
         self.turn_kwargs: list[dict] = []
-
-    def run(self, prompt: str, **kwargs):
-        self.prompts.append(prompt)
-        self.run_kwargs.append(kwargs)
-        return SimpleNamespace(final_response=self.response)
 
     def turn(self, prompt: str, **kwargs):
         self.prompts.append(prompt)
         self.turn_kwargs.append(kwargs)
         return SimpleNamespace(
+            run=lambda: SimpleNamespace(final_response=self.response),
             stream=lambda: iter(
                 [
                     SimpleNamespace(
@@ -220,14 +215,14 @@ def test_client_auto_logs_in_and_retries_once_after_401():
     events = []
 
     class UnauthorizedThread:
-        def run(self, prompt: str):
+        def turn(self, prompt: str):
             events.append(("run", prompt))
             raise RuntimeError("unexpected status 401 Unauthorized: Missing bearer or basic authentication")
 
     class SuccessThread:
-        def run(self, prompt: str):
+        def turn(self, prompt: str):
             events.append(("run", prompt))
-            return SimpleNamespace(final_response=json.dumps({"ok": True}))
+            return SimpleNamespace(run=lambda: SimpleNamespace(final_response=json.dumps({"ok": True})))
 
     class UnauthorizedCodex:
         def __enter__(self):
@@ -338,7 +333,7 @@ def test_oauth_login_uses_device_code_flow(tmp_path: Path):
 
 def test_client_maps_401_to_authentication_error_when_auto_login_is_disabled():
     class UnauthorizedThread:
-        def run(self, prompt: str):
+        def turn(self, prompt: str):
             raise RuntimeError("unexpected status 401 Unauthorized: Missing bearer or basic authentication")
 
     class UnauthorizedCodex:
