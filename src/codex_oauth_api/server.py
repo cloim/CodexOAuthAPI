@@ -46,7 +46,7 @@ def _env_list(name: str) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class ServerSettings:
     state_root: Path | str = field(default_factory=lambda: Path.cwd() / ".codex-oauth-api-state")
-    default_model: str = "gpt-5.5"
+    default_model: str = "gpt-6.1-terra"
     thread_pool_size: int = 4
     secondary_pool_size: int = 1
     api_key: str | None = None
@@ -91,7 +91,7 @@ class ServerSettings:
         host = os.environ.get("CODEX_OAUTH_API_HOST")
         return cls(
             state_root=Path(state_root) if state_root is not None else Path.cwd() / ".codex-oauth-api-state",
-            default_model=default_model if default_model is not None else "gpt-5.5",
+            default_model=default_model if default_model is not None else "gpt-6.1-terra",
             thread_pool_size=_env_int("CODEX_OAUTH_API_THREAD_POOL_SIZE", 4),
             secondary_pool_size=_env_int("CODEX_OAUTH_API_SECONDARY_POOL_SIZE", 1),
             api_key=api_key,

@@ -303,8 +303,8 @@ def test_application_lifespan_starts_and_closes_shared_runtime_once(tmp_path: Pa
     assert events == [
         ("init", tmp_path / "state"),
         "start",
-        ("client", "gpt-5.5", False),
-        ("client", "gpt-5.5", False),
+        ("client", "gpt-6.1-terra", False),
+        ("client", "gpt-6.1-terra", False),
         "close",
     ]
     assert [client.calls for client in clients] == [

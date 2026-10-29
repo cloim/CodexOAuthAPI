@@ -51,16 +51,16 @@ Try a request:
 curl.exe http://127.0.0.1:8000/v1/chat/completions `
   -H "Content-Type: application/json" `
   -H "Authorization: Bearer replace-with-generated-key" `
-  -d '{ "model": "gpt-5.5", "messages": [{ "role": "user", "content": "Hello from CodexOAuthAPI" }] }'
+  -d '{ "model": "gpt-6.1-terra", "messages": [{ "role": "user", "content": "Hello from CodexOAuthAPI" }] }'
 ```
 
-Fast mode is selected per request. Standard `gpt-5.5` requests use the
+Fast mode is selected per request. Standard `gpt-6.1-terra` requests use the
 pre-created thread pool, while Fast requests bypass the pool and start a
 separate thread.
 
 ```json
 {
-  "model": "gpt-5.5",
+  "model": "gpt-6.1-terra",
   "service_tier": "fast",
   "reasoning_effort": "low",
   "messages": [{ "role": "user", "content": "Hello" }]
@@ -75,7 +75,7 @@ Set `stream: true` to receive OpenAI-style SSE chunks:
 curl.exe -N http://127.0.0.1:8000/v1/chat/completions `
   -H "Content-Type: application/json" `
   -H "Authorization: Bearer replace-with-generated-key" `
-  -d '{ "model": "gpt-5.5", "stream": true, "messages": [{ "role": "user", "content": "Stream this response" }] }'
+  -d '{ "model": "gpt-6.1-terra", "stream": true, "messages": [{ "role": "user", "content": "Stream this response" }] }'
 ```
 
 ## Endpoints

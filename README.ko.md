@@ -51,15 +51,15 @@ uv run codex-oauth-api serve --host 127.0.0.1 --port 8000
 curl.exe http://127.0.0.1:8000/v1/chat/completions `
   -H "Content-Type: application/json" `
   -H "Authorization: Bearer 생성된키로교체" `
-  -d '{ "model": "gpt-5.5", "messages": [{ "role": "user", "content": "CodexOAuthAPI에서 호출합니다" }] }'
+  -d '{ "model": "gpt-6.1-terra", "messages": [{ "role": "user", "content": "CodexOAuthAPI에서 호출합니다" }] }'
 ```
 
-Fast mode는 요청별로 선택합니다. 일반 `gpt-5.5` 요청은 사전 생성된 스레드 풀을
+Fast mode는 요청별로 선택합니다. 일반 `gpt-6.1-terra` 요청은 사전 생성된 스레드 풀을
 사용하고, Fast 요청은 풀을 우회해 별도 스레드로 실행됩니다.
 
 ```json
 {
-  "model": "gpt-5.5",
+  "model": "gpt-6.1-terra",
   "service_tier": "fast",
   "reasoning_effort": "low",
   "messages": [{ "role": "user", "content": "안녕?" }]
@@ -74,7 +74,7 @@ Fast mode는 요청별로 선택합니다. 일반 `gpt-5.5` 요청은 사전 생
 curl.exe -N http://127.0.0.1:8000/v1/chat/completions `
   -H "Content-Type: application/json" `
   -H "Authorization: Bearer 생성된키로교체" `
-  -d '{ "model": "gpt-5.5", "stream": true, "messages": [{ "role": "user", "content": "스트리밍으로 답해줘" }] }'
+  -d '{ "model": "gpt-6.1-terra", "stream": true, "messages": [{ "role": "user", "content": "스트리밍으로 답해줘" }] }'
 ```
 
 ## 엔드포인트
