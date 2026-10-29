@@ -393,6 +393,11 @@ class IsolatedCodexRuntime:
             thread_factory=self._acquire_thread,
         )
 
+    def list_models(self) -> list[str]:
+        if self._codex is None:
+            raise RuntimeError("Codex runtime has not been started")
+        return [model.id for model in self._codex.models(include_hidden=False).data]
+
     def close(self) -> None:
         if self._codex is None:
             return

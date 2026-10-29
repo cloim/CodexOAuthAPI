@@ -83,7 +83,7 @@ curl.exe -N http://127.0.0.1:8000/v1/chat/completions `
 | Endpoint | Access | Purpose |
 | --- | --- | --- |
 | `GET /health` | Public | Health check |
-| `GET /v1/models` | Protected | Lists the configured default model |
+| `GET /v1/models` | Protected | Lists the models Codex offers (falls back to the default model) |
 | `POST /v1/chat/completions` | Protected | OpenAI-compatible chat completions |
 
 Configured access control applies to `/v1/*`. `/health` remains public so
@@ -100,7 +100,7 @@ directory. Values already set in the OS environment take precedence over `.env`.
 | `CODEX_OAUTH_API_ALLOWED_IPS` | Optional | Comma-separated direct client IP allowlist for `/v1/*` |
 | `CODEX_OAUTH_API_STATE_ROOT` | Optional | Isolated server state directory |
 | `CODEX_OAUTH_API_HOST` | Optional | Bind host used by `serve`; defaults to `127.0.0.1` |
-| `CODEX_OAUTH_API_DEFAULT_MODEL` | Optional | Model listed by `/v1/models` and used when omitted |
+| `CODEX_OAUTH_API_DEFAULT_MODEL` | Optional | Model used when omitted and listed by `/v1/models` if Codex model lookup fails |
 | `CODEX_OAUTH_API_THREAD_POOL_SIZE` | Optional | Pre-created standard-tier threads for the default model; defaults to `4` |
 | `CODEX_OAUTH_API_AUTO_LOGIN` | Optional | Set to `true` to allow request-triggered device login |
 

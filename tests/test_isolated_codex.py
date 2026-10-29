@@ -387,3 +387,26 @@ def test_hidden_window_factory_hides_codex_process_on_windows():
     assert len(popen_calls) == 1
     assert popen_calls[0]["creationflags"] & subprocess.CREATE_NO_WINDOW
     assert popen_calls[0]["startupinfo"].wShowWindow == subprocess.SW_HIDE
+
+
+def test_runtime_lists_visible_codex_models(tmp_path: Path):
+    codex = FakeCodex("응답")
+    model_calls = []
+
+    def models(*, include_hidden):
+        model_calls.append(include_hidden)
+        return SimpleNamespace(data=[SimpleNamespace(id="gpt-6.1-sol"), SimpleNamespace(id="gpt-5.6-sol")])
+
+    codex.models = models
+    runtime = IsolatedCodexRuntime(
+        IsolatedCodexSettings(state_root=tmp_path / "state"),
+        codex_factory=lambda: codex,
+        sandbox="read-only",
+    )
+
+    with pytest.raises(RuntimeError):
+        runtime.list_models()
+    runtime.start()
+
+    assert runtime.list_models() == ["gpt-6.1-sol", "gpt-5.6-sol"]
+    assert model_calls == [False]

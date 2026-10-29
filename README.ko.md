@@ -82,7 +82,7 @@ curl.exe -N http://127.0.0.1:8000/v1/chat/completions `
 | Endpoint | 접근 | 용도 |
 | --- | --- | --- |
 | `GET /health` | 공개 | 헬스 체크 |
-| `GET /v1/models` | 보호 | 기본 모델 조회 |
+| `GET /v1/models` | 보호 | Codex 제공 모델 목록 조회 (조회 실패 시 기본 모델) |
 | `POST /v1/chat/completions` | 보호 | OpenAI 호환 채팅 completions |
 
 접근 제어는 `/v1/*`에 적용됩니다. `/health`는 모니터링과 헬스 체크를 위해
@@ -99,7 +99,7 @@ CodexOAuthAPI는 현재 작업 디렉터리의 `.env` 파일을 읽습니다. �
 | `CODEX_OAUTH_API_ALLOWED_IPS` | 선택 | `/v1/*` 호출을 허용할 직접 접속 IP 목록 |
 | `CODEX_OAUTH_API_STATE_ROOT` | 선택 | 격리된 서버 상태 디렉터리 |
 | `CODEX_OAUTH_API_HOST` | 선택 | `serve`가 바인딩할 호스트, 기본값 `127.0.0.1` |
-| `CODEX_OAUTH_API_DEFAULT_MODEL` | 선택 | `/v1/models`에 표시되고 요청에서 생략 시 사용할 모델 |
+| `CODEX_OAUTH_API_DEFAULT_MODEL` | 선택 | 요청에서 생략 시 사용할 모델, Codex 모델 조회 실패 시 `/v1/models`에 표시 |
 | `CODEX_OAUTH_API_THREAD_POOL_SIZE` | 선택 | 기본 모델의 일반 tier용 사전 생성 스레드 수, 기본값 `4` |
 | `CODEX_OAUTH_API_AUTO_LOGIN` | 선택 | `true`면 요청 중 Codex 401 발생 시 device login 허용 |
 

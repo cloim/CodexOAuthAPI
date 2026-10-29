@@ -645,6 +645,54 @@ def test_codex_authentication_error_maps_to_service_unavailable(tmp_path: Path):
     }
 
 
+def test_models_endpoint_lists_codex_runtime_models(tmp_path: Path):
+    class FakeRuntime:
+        def __init__(self, settings):
+            pass
+
+        def start(self):
+            pass
+
+        def list_models(self):
+            return ["gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-5.6-sol"]
+
+        def close(self):
+            pass
+
+    app = create_app(ServerSettings(state_root=tmp_path / "state"), codex_runtime_factory=FakeRuntime)
+
+    with TestClient(app) as client:
+        response = client.get("/v1/models")
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["data"]] == ["gpt-6.1-sol", "gpt-6-astra", "gpt-5.6-sol"]
+
+
+def test_models_endpoint_falls_back_to_default_model_when_listing_fails(tmp_path: Path):
+    class FakeRuntime:
+        def __init__(self, settings):
+            pass
+
+        def start(self):
+            pass
+
+        def list_models(self):
+            raise RuntimeError("model/list failed")
+
+        def close(self):
+            pass
+
+    app = create_app(
+        ServerSettings(state_root=tmp_path / "state", default_model="gpt-6.1-sol"),
+        codex_runtime_factory=FakeRuntime,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/v1/models")
+
+    assert [item["id"] for item in response.json()["data"]] == ["gpt-6.1-sol"]
+
+
 def test_models_endpoint_lists_default_model(tmp_path: Path):
     app = create_app(ServerSettings(state_root=tmp_path / "state", default_model="gpt-5.5"))
 

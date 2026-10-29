@@ -221,15 +221,24 @@ def create_app(
 
     @app.get("/v1/models")
     async def models() -> dict[str, Any]:
+        model_ids = [settings.default_model]
+        if runtime is not None and hasattr(runtime, "list_models"):
+            try:
+                listed = await run_in_threadpool(runtime.list_models)
+            except Exception:
+                listed = []
+            if listed:
+                model_ids = list(dict.fromkeys(listed))
         return {
             "object": "list",
             "data": [
                 {
-                    "id": settings.default_model,
+                    "id": model_id,
                     "object": "model",
                     "created": 0,
                     "owned_by": "codex-oauth-api",
                 }
+                for model_id in model_ids
             ],
         }
 
