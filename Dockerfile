@@ -16,6 +16,7 @@ FROM python:3.13-slim-bookworm
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    TZ=Asia/Seoul \
     CODEX_OAUTH_API_STATE_ROOT=/state \
     CODEX_OAUTH_API_HOST=0.0.0.0
 COPY --from=builder /app/.venv /app/.venv
