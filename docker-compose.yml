@@ -6,6 +6,7 @@ services:
     image: codex-oauth-api:latest
     container_name: codex-oauth-api
     restart: unless-stopped
+    command: ["serve", "--debug", "--timing"]
     ports:
       - "47340:8000"
     volumes:
