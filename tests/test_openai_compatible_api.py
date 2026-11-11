@@ -797,6 +797,16 @@ def test_server_settings_from_env_defaults_host(monkeypatch, tmp_path: Path):
     assert settings.host == "127.0.0.1"
 
 
+def test_server_settings_from_env_reads_debug(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEX_OAUTH_API_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setenv("CODEX_OAUTH_API_DEBUG", "true")
+
+    settings = ServerSettings.from_env()
+
+    assert settings.debug is True
+
+
 def test_cli_serve_uses_host_from_environment_with_default_port(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CODEX_OAUTH_API_STATE_ROOT", str(tmp_path / "state"))

@@ -98,6 +98,7 @@ class ServerSettings:
             allowed_ips=_env_list("CODEX_OAUTH_API_ALLOWED_IPS"),
             trusted_proxies=_env_list("CODEX_OAUTH_API_TRUSTED_PROXIES"),
             auto_login=os.environ.get("CODEX_OAUTH_API_AUTO_LOGIN") == "true",
+            debug=os.environ.get("CODEX_OAUTH_API_DEBUG") == "true",
             timing=os.environ.get("CODEX_OAUTH_API_TIMING_LOG") == "true",
             host=host if host is not None else "127.0.0.1",
             turn_timeout_seconds=_env_float("CODEX_OAUTH_API_TURN_TIMEOUT_SECONDS", 600.0),
