@@ -78,16 +78,28 @@ curl.exe -N http://127.0.0.1:8000/v1/chat/completions `
   -d '{ "model": "gpt-6.1-terra", "stream": true, "messages": [{ "role": "user", "content": "Stream this response" }] }'
 ```
 
+## Web Dashboard
+
+Navigating to `http://127.0.0.1:8000/` or `http://127.0.0.1:8000/dashboard` in a browser opens the integrated web dashboard without needing any frontend build tools:
+
+- **Overview and Auth**: Check Codex OAuth status, trigger device-code login with one click, or log out
+- **Live Logs**: Real-time streaming (SSE), searching, and filtering of request/response bodies, HTTP statuses, and timing metrics
+- **Settings**: Inspect and update `.env` settings via web UI, or generate new API keys
+- **Playground**: Send test prompts directly to `/v1/chat/completions` and verify model streaming output
+
 ## Endpoints
 
 | Endpoint | Access | Purpose |
 | --- | --- | --- |
+| `GET /`, `GET /dashboard` | Local/Protected | Web management dashboard (SPA) |
 | `GET /health` | Public | Health check |
 | `GET /v1/models` | Protected | Lists the models Codex offers (falls back to the default model) |
 | `POST /v1/chat/completions` | Protected | OpenAI-compatible chat completions |
+| `GET/POST /api/auth/*` | Local/Protected | Codex OAuth authentication and login management |
+| `GET/DELETE /api/logs*` | Local/Protected | Real-time log inspection, streaming, and clearing |
+| `GET/PUT /api/settings*` | Local/Protected | Server configuration management and API key generation |
 
-Configured access control applies to `/v1/*`. `/health` remains public so
-supervisors and health checks can keep working.
+Configured access control applies to `/v1/*` and `/api/*`. When no API key or allowed IP list is configured, `/api/*` management endpoints are safely restricted to loopback (127.0.0.1, ::1). `/health` remains public so supervisors and health checks can keep working.
 
 ## Configuration
 

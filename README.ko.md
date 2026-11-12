@@ -77,16 +77,28 @@ curl.exe -N http://127.0.0.1:8000/v1/chat/completions `
   -d '{ "model": "gpt-6.1-terra", "stream": true, "messages": [{ "role": "user", "content": "스트리밍으로 답해줘" }] }'
 ```
 
+## 웹 대시보드
+
+브라우저에서 `http://127.0.0.1:8000/` 또는 `http://127.0.0.1:8000/dashboard`에 접속하면 별도의 프론트엔드 빌드 과정 없이 바로 사용할 수 있는 통합 웹 대시보드가 열립니다.
+
+- **개요와 인증**: Codex OAuth 인증 상태 확인, 원클릭 Device Code 로그인 및 세션 로그아웃
+- **실시간 로그**: 요청/응답 본문, HTTP 상태, 처리 시간(타이밍), 오류 로그 실시간 스트리밍(SSE)과 검색
+- **환경설정**: `.env` 설정값 조회와 웹 편집/저장, 신규 API 키 난수 생성
+- **플레이그라운드**: 대시보드에서 `/v1/chat/completions` 요청을 즉석 전송하고 스트리밍 응답 확인
+
 ## 엔드포인트
 
 | Endpoint | 접근 | 용도 |
 | --- | --- | --- |
+| `GET /`, `GET /dashboard` | 로컬/보호 | 웹 관리 대시보드 (SPA) |
 | `GET /health` | 공개 | 헬스 체크 |
 | `GET /v1/models` | 보호 | Codex 제공 모델 목록 조회 (조회 실패 시 기본 모델) |
 | `POST /v1/chat/completions` | 보호 | OpenAI 호환 채팅 completions |
+| `GET/POST /api/auth/*` | 로컬/보호 | Codex OAuth 로그인 및 인증 상태 관리 |
+| `GET/DELETE /api/logs*` | 로컬/보호 | 실시간 요청 로그 조회, 스트리밍, 초기화 |
+| `GET/PUT /api/settings*` | 로컬/보호 | 환경설정 조회, 수정 및 API 키 생성 |
 
-접근 제어는 `/v1/*`에 적용됩니다. `/health`는 모니터링과 헬스 체크를 위해
-공개 상태로 유지됩니다.
+접근 제어는 `/v1/*` 및 `/api/*`에 적용됩니다. 별도의 API 키나 IP 허용 목록이 설정되지 않은 상태에서 `/api/*` 관리 기능은 루프백(127.0.0.1, ::1) 접속으로만 안전하게 제한됩니다. `/health`는 모니터링과 헬스 체크를 위해 공개 상태로 유지됩니다.
 
 ## 설정
 

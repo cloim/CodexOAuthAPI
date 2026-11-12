@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict
 
+from .dashboard import register_dashboard
 from .isolated_codex import (
     ISOLATED_CODEX_BASE_INSTRUCTIONS,
     IsolatedCodexAuthenticationError,
@@ -27,6 +28,7 @@ from .isolated_codex import (
     IsolatedCodexSettings,
     coerce_reasoning_effort,
 )
+from .logbuffer import LOG_BUFFER
 
 
 def _env_float(name: str, default: float) -> float:
@@ -61,6 +63,7 @@ class ServerSettings:
     max_queued_requests: int = 32
     stream_heartbeat_seconds: float = 15.0
     models_cache_ttl_seconds: float = 300.0
+    env_file: Path | str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "state_root", Path(self.state_root))
@@ -146,6 +149,14 @@ def _print_debug_log(
     if status_code is not None:
         record["status_code"] = status_code
     print(json.dumps(record, ensure_ascii=False, sort_keys=True), flush=True)
+    log_type = event.removeprefix("codex_oauth_api.").replace("response.chunk", "chunk")
+    failed = status_code is not None and status_code >= 400
+    LOG_BUFFER.add(
+        "error" if failed else "debug",
+        log_type,
+        f"{method} {path}" + (f" -> {status_code}" if status_code is not None else ""),
+        body,
+    )
 
 
 def _print_timing_log(phase: str, **durations_ms: float) -> None:
@@ -156,6 +167,11 @@ def _print_timing_log(phase: str, **durations_ms: float) -> None:
     }
     record.update({key: round(value, 3) for key, value in durations_ms.items()})
     print(json.dumps(record, ensure_ascii=False, sort_keys=True), flush=True)
+    LOG_BUFFER.add(
+        "info",
+        "timing",
+        f"{phase}: " + ", ".join(f"{key}={round(value, 1)}" for key, value in durations_ms.items()),
+    )
 
 
 def _error_body(message: str, error_type: str, code: str) -> dict[str, Any]:
@@ -260,6 +276,7 @@ def create_app(
     settings: ServerSettings | None = None,
     codex_client_factory: Callable[..., Any] | None = None,
     codex_runtime_factory: Callable[..., Any] | None = None,
+    auth_login_factory: Callable[[IsolatedCodexSettings], Any] | None = None,
 ) -> FastAPI:
     settings = settings or ServerSettings()
     timing_enabled = settings.debug or settings.timing
@@ -298,7 +315,20 @@ def create_app(
 
     @app.middleware("http")
     async def enforce_v1_access_policy(request: Request, call_next):
-        if request.url.path.startswith("/v1/"):
+        path = request.url.path
+        is_api = path.startswith("/api/")
+        if is_api and settings.api_key is None and settings.allowed_ips == ():
+            # Without any credential, the management API stays reachable from loopback only.
+            if _resolve_client_ip(request, settings.trusted_proxies) not in ("127.0.0.1", "::1"):
+                return JSONResponse(
+                    status_code=403,
+                    content=_error_body(
+                        "Set CODEX_OAUTH_API_KEY to use the dashboard API from another host.",
+                        "forbidden_client_ip",
+                        "forbidden_client_ip",
+                    ),
+                )
+        if path.startswith("/v1/") or is_api:
             debug_method = request.method
             debug_path = request.url.path
             client_host = _resolve_client_ip(request, settings.trusted_proxies)
@@ -331,6 +361,26 @@ def create_app(
                 return JSONResponse(status_code=401, content=response_body)
 
         return await call_next(request)
+
+    @app.middleware("http")
+    async def record_access_log(request: Request, call_next):
+        path = request.url.path
+        if not (path.startswith("/v1/") or path.startswith("/api/")) or path.startswith("/api/logs"):
+            return await call_next(request)
+        started_at = time.perf_counter()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            LOG_BUFFER.add(
+                "error" if status_code >= 500 else "warning" if status_code >= 400 else "info",
+                "access",
+                f"{request.method} {path} -> {status_code} ({(time.perf_counter() - started_at) * 1000:.0f} ms)",
+            )
+
+    register_dashboard(app, settings=settings, isolated_settings=isolated_settings, login_factory=auth_login_factory)
 
     @app.get("/health")
     async def health():
@@ -388,6 +438,12 @@ def create_app(
             )
 
         def error_response(status_code: int, response_body: dict[str, Any], headers=None) -> JSONResponse:
+            if not settings.debug:
+                LOG_BUFFER.add(
+                    "error",
+                    "error",
+                    f"{debug_method} {debug_path} -> {status_code}: {response_body['error']['message']}",
+                )
             if settings.debug:
                 _print_debug_log(
                     "codex_oauth_api.response",

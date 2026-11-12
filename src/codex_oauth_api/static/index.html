@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="ko" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodexOAuthAPI 대시보드</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script>
+  tailwind.config = { darkMode: "class", theme: { extend: { fontFamily: { sans: ["Pretendard", "Segoe UI", "Malgun Gothic", "system-ui", "sans-serif"], mono: ["Cascadia Code", "Consolas", "monospace"] } } } };
+</script>
+<style>
+  body { word-break: keep-all; overflow-wrap: break-word; }
+  .log-line { word-break: break-all; }
+  .tab-btn[aria-selected="true"] { color: #fff; border-color: #6366f1; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-zinc-950 text-zinc-200 font-sans min-h-screen">
+<header class="border-b border-zinc-800 bg-zinc-900/60 backdrop-blur sticky top-0 z-10">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
+    <h1 class="text-lg font-semibold tracking-tight">CodexOAuthAPI</h1>
+    <span id="health" class="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">확인 중</span>
+    <div class="ml-auto flex items-center gap-2">
+      <input id="apiKey" type="password" autocomplete="off" placeholder="API 키 (설정된 경우)" class="w-52 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-indigo-500">
+      <button id="apiKeySave" class="text-sm px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700">적용</button>
+    </div>
+  </div>
+  <nav class="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto" role="tablist">
+    <button class="tab-btn px-4 py-2 text-sm text-zinc-400 border-b-2 border-transparent hover:text-white" data-tab="overview" role="tab">개요와 인증</button>
+    <button class="tab-btn px-4 py-2 text-sm text-zinc-400 border-b-2 border-transparent hover:text-white" data-tab="logs" role="tab">실시간 로그</button>
+    <button class="tab-btn px-4 py-2 text-sm text-zinc-400 border-b-2 border-transparent hover:text-white" data-tab="settings" role="tab">설정</button>
+    <button class="tab-btn px-4 py-2 text-sm text-zinc-400 border-b-2 border-transparent hover:text-white" data-tab="playground" role="tab">플레이그라운드</button>
+  </nav>
+</header>
+
+<div id="toast" class="fixed bottom-4 right-4 hidden max-w-sm px-4 py-2 rounded-lg text-sm shadow-lg z-20"></div>
+
+<main class="max-w-6xl mx-auto px-4 py-6">
+  <!-- Overview -->
+  <section id="tab-overview" class="space-y-4">
+    <div class="grid gap-4 md:grid-cols-2">
+      <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+        <h2 class="font-semibold mb-3">인증 상태</h2>
+        <dl class="text-sm space-y-2">
+          <div class="flex justify-between gap-4"><dt class="text-zinc-400">상태</dt><dd id="authState">-</dd></div>
+          <div class="flex justify-between gap-4"><dt class="text-zinc-400">계정</dt><dd id="authAccount" class="font-mono text-right">-</dd></div>
+          <div class="flex justify-between gap-4"><dt class="text-zinc-400">이메일</dt><dd id="authEmail" class="text-right">-</dd></div>
+          <div class="flex justify-between gap-4"><dt class="text-zinc-400">마지막 갱신</dt><dd id="authRefresh" class="text-right">-</dd></div>
+        </dl>
+        <div class="mt-4 flex gap-2">
+          <button id="loginBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium">Device Code 로그인</button>
+          <button id="logoutBtn" class="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">로그아웃</button>
+        </div>
+      </div>
+      <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+        <h2 class="font-semibold mb-3">서버 정보</h2>
+        <dl class="text-sm space-y-2">
+          <div class="flex justify-between gap-4"><dt class="text-zinc-400">엔드포인트</dt><dd id="endpoint" class="font-mono text-right">-</dd></div>
+          <div class="flex justify-between gap-4"><dt class="text-zinc-400">기본 모델</dt><dd id="defaultModel" class="font-mono text-right">-</dd></div>
+          <div class="flex justify-between gap-4"><dt class="text-zinc-400">사용 가능 모델</dt><dd id="modelCount" class="text-right">-</dd></div>
+        </dl>
+        <p id="modelList" class="mt-3 text-xs text-zinc-500 font-mono break-all"></p>
+      </div>
+    </div>
+    <div id="loginCard" class="hidden rounded-xl border border-indigo-500/40 bg-indigo-950/30 p-5">
+      <h2 class="font-semibold mb-2">Device Code 로그인</h2>
+      <p id="loginMsg" class="text-sm text-zinc-300 mb-3"></p>
+      <div id="loginCodeBox" class="hidden space-y-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-sm text-zinc-400">1. 아래 주소를 열어 주세요</span>
+          <a id="loginUrl" target="_blank" rel="noopener noreferrer" class="text-indigo-300 underline break-all text-sm"></a>
+          <button data-copy="loginUrl" class="copy-btn text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">복사</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="text-sm text-zinc-400">2. 코드를 입력해 주세요</span>
+          <code id="loginCode" class="text-2xl tracking-widest font-mono bg-zinc-900 border border-zinc-700 rounded px-3 py-1"></code>
+          <button data-copy="loginCode" class="copy-btn text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">복사</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Logs -->
+  <section id="tab-logs" class="hidden space-y-3">
+    <div class="flex flex-wrap items-center gap-2">
+      <input id="logQuery" placeholder="검색" class="flex-1 min-w-40 bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500">
+      <select id="logLevel" class="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-sm">
+        <option value="">모든 레벨</option><option>debug</option><option>info</option><option>warning</option><option>error</option>
+      </select>
+      <select id="logType" class="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-sm">
+        <option value="">모든 유형</option><option>access</option><option>request</option><option>response</option><option>chunk</option><option>timing</option><option>auth</option><option>error</option><option>system</option>
+      </select>
+      <label class="text-sm text-zinc-400 flex items-center gap-1"><input id="logAuto" type="checkbox" checked> 자동 스크롤</label>
+      <button id="logClear" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">비우기</button>
+    </div>
+    <p class="text-xs text-zinc-500">본문 로그는 서버를 --debug 또는 CODEX_OAUTH_API_DEBUG=true 로 실행할 때만 수집돼요. 최근 500건을 보관해요.</p>
+    <div id="logBox" class="h-[60vh] overflow-auto rounded-xl border border-zinc-800 bg-black/50 p-3 font-mono text-xs space-y-1"></div>
+  </section>
+
+  <!-- Settings -->
+  <section id="tab-settings" class="hidden space-y-4">
+    <div class="rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">저장한 값은 .env 파일에 기록되며 서버를 재시작해야 적용돼요.</div>
+    <form id="settingsForm" class="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4"></form>
+    <p id="settingsMeta" class="text-xs text-zinc-500 font-mono break-all"></p>
+  </section>
+
+  <!-- Playground -->
+  <section id="tab-playground" class="hidden grid gap-4 md:grid-cols-2">
+    <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <label class="text-sm text-zinc-400">모델
+          <input id="pgModel" list="pgModels" class="mt-1 w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 font-mono">
+          <datalist id="pgModels"></datalist>
+        </label>
+        <label class="text-sm text-zinc-400">추론 강도
+          <select id="pgEffort" class="mt-1 w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200">
+            <option value="">기본값</option><option>minimal</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option>
+          </select>
+        </label>
+      </div>
+      <label class="text-sm text-zinc-400 block">시스템 프롬프트 (선택)
+        <textarea id="pgSystem" rows="2" class="mt-1 w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200"></textarea>
+      </label>
+      <label class="text-sm text-zinc-400 block">프롬프트
+        <textarea id="pgPrompt" rows="6" class="mt-1 w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200" placeholder="메시지를 입력해 주세요"></textarea>
+      </label>
+      <div class="flex items-center gap-3">
+        <label class="text-sm text-zinc-400 flex items-center gap-1"><input id="pgStream" type="checkbox" checked> 스트리밍</label>
+        <button id="pgSend" class="ml-auto px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium">전송</button>
+        <button id="pgStop" class="hidden px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">중단</button>
+      </div>
+    </div>
+    <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+      <div class="flex items-center justify-between mb-2"><h2 class="font-semibold">응답</h2><span id="pgStatus" class="text-xs text-zinc-500"></span></div>
+      <pre id="pgOut" class="whitespace-pre-wrap text-sm min-h-48 max-h-[60vh] overflow-auto" style="word-break: keep-all"></pre>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const KEY_STORE = "codexOauthApiKey";
+const storage = { get() { try { return sessionStorage.getItem(KEY_STORE) || ""; } catch { return ""; } }, set(v) { try { sessionStorage.setItem(KEY_STORE, v); } catch {} } };
+let apiKey = storage.get();
+$("apiKey").value = apiKey;
+
+function headers(extra = {}) {
+  return apiKey ? { Authorization: "Bearer " + apiKey, ...extra } : extra;
+}
+function toast(msg, kind = "ok") {
+  const el = $("toast");
+  el.textContent = msg;
+  el.className = "fixed bottom-4 right-4 max-w-sm px-4 py-2 rounded-lg text-sm shadow-lg z-20 " + (kind === "err" ? "bg-red-900 text-red-100" : "bg-emerald-900 text-emerald-100");
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => el.classList.add("hidden"), 3500);
+}
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: headers(opts.headers || {}) });
+  let body = null;
+  try { body = await res.json(); } catch {}
+  if (!res.ok) {
+    const msg = body?.detail || body?.error?.message || ("요청에 실패했어요 (" + res.status + ")");
+    if (res.status === 401) toast("API 키가 필요해요. 상단에 입력해 주세요.", "err");
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  return body;
+}
+const jsonOpts = (method, data) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+
+$("apiKeySave").onclick = () => { apiKey = $("apiKey").value.trim(); storage.set(apiKey); toast("API 키를 적용했어요."); refreshAll(); };
+
+// Tabs
+let activeTab = "overview";
+function showTab(name) {
+  activeTab = name;
+  for (const el of document.querySelectorAll("[id^='tab-']")) el.classList.toggle("hidden", el.id !== "tab-" + name);
+  for (const b of document.querySelectorAll(".tab-btn")) b.setAttribute("aria-selected", String(b.dataset.tab === name));
+  if (name === "logs") startLogs(); else stopLogs();
+  if (name === "settings") loadSettings();
+  if (name === "playground") loadModels();
+  history.replaceState(null, "", "#" + name);
+}
+document.querySelectorAll(".tab-btn").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+
+// Copy
+document.querySelectorAll(".copy-btn").forEach((b) => (b.onclick = async () => {
+  try { await navigator.clipboard.writeText($(b.dataset.copy).textContent); toast("복사했어요."); } catch { toast("복사하지 못했어요.", "err"); }
+}));
+
+// Overview and auth
+let pollTimer = null;
+function fmtTime(iso) { if (!iso) return "-"; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString("ko-KR"); }
+async function loadHealth() {
+  try {
+    const res = await fetch("/health");
+    const ok = res.ok;
+    $("health").textContent = ok ? "서버 정상" : "서버 점검 필요";
+    $("health").className = "text-xs px-2 py-0.5 rounded-full " + (ok ? "bg-emerald-900 text-emerald-200" : "bg-red-900 text-red-200");
+  } catch { $("health").textContent = "연결 끊김"; $("health").className = "text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-200"; }
+}
+async function loadAuth() {
+  try {
+    const s = await api("/api/auth/status");
+    $("authState").innerHTML = s.authenticated ? '<span class="text-emerald-400">로그인됨</span>' : '<span class="text-amber-400">로그인 필요</span>';
+    $("authAccount").textContent = s.account_id || "-";
+    $("authEmail").textContent = s.email || "-";
+    $("authRefresh").textContent = fmtTime(s.last_refresh);
+    renderLogin(s.login, s.authenticated);
+  } catch (e) { $("authState").textContent = e.message; }
+}
+function renderLogin(login, authenticated) {
+  const card = $("loginCard");
+  const waiting = login.status === "waiting" || login.status === "starting";
+  card.classList.toggle("hidden", !(waiting || login.status === "failed"));
+  $("loginCodeBox").classList.toggle("hidden", login.status !== "waiting");
+  if (login.status === "waiting") {
+    $("loginMsg").textContent = "인증이 끝나면 이 화면이 자동으로 갱신돼요.";
+    $("loginUrl").textContent = login.verification_url; $("loginUrl").href = login.verification_url;
+    $("loginCode").textContent = login.user_code;
+  } else if (login.status === "starting") $("loginMsg").textContent = "Device Code를 요청하는 중이에요.";
+  else if (login.status === "failed") $("loginMsg").textContent = "로그인에 실패했어요: " + (login.error || "알 수 없는 오류");
+  if (waiting && !pollTimer) pollTimer = setInterval(loadAuth, 2500);
+  if (!waiting && pollTimer) { clearInterval(pollTimer); pollTimer = null; if (authenticated) toast("로그인이 완료되었어요."); }
+}
+$("loginBtn").onclick = async () => {
+  try { $("loginBtn").disabled = true; const r = await api("/api/auth/login", { method: "POST" }); renderLogin(r.login, false); loadAuth(); }
+  catch (e) { toast(e.message, "err"); } finally { $("loginBtn").disabled = false; }
+};
+$("logoutBtn").onclick = async () => {
+  if (!confirm("인증 정보를 삭제하고 로그아웃할까요?")) return;
+  try { await api("/api/auth/logout", { method: "POST" }); toast("로그아웃했어요."); loadAuth(); } catch (e) { toast(e.message, "err"); }
+};
+let modelIds = [];
+async function loadModels() {
+  try {
+    const m = await api("/v1/models");
+    modelIds = m.data.map((x) => x.id);
+    $("modelCount").textContent = modelIds.length + "개";
+    $("modelList").textContent = modelIds.join(" | ");
+    $("pgModels").innerHTML = "";
+    for (const id of modelIds) { const o = document.createElement("option"); o.value = id; $("pgModels").appendChild(o); }
+    if (!$("pgModel").value && modelIds[0]) $("pgModel").value = modelIds[0];
+    $("defaultModel").textContent = modelIds[0] || "-";
+  } catch { $("modelCount").textContent = "조회 실패"; }
+}
+function refreshAll() { loadHealth(); loadAuth(); loadModels(); if (activeTab === "logs") { stopLogs(); startLogs(); } if (activeTab === "settings") loadSettings(); }
+
+// Logs
+let logAbort = null, lastLogId = 0;
+function logLine(r) {
+  const row = document.createElement("div");
+  row.className = "log-line flex gap-2";
+  const colors = { error: "text-red-400", warning: "text-amber-400", info: "text-sky-400", debug: "text-zinc-500" };
+  const time = document.createElement("span"); time.className = "text-zinc-600 shrink-0"; time.textContent = r.timestamp.slice(11, 23);
+  const lvl = document.createElement("span"); lvl.className = "shrink-0 w-14 " + (colors[r.level] || ""); lvl.textContent = r.level;
+  const typ = document.createElement("span"); typ.className = "shrink-0 w-16 text-zinc-500"; typ.textContent = r.type;
+  const msg = document.createElement("span"); msg.className = "text-zinc-200"; msg.textContent = r.message + (r.detail ? "  " + r.detail : "");
+  row.append(time, lvl, typ, msg);
+  return row;
+}
+function logParams(after) {
+  const p = new URLSearchParams();
+  if ($("logQuery").value) p.set("q", $("logQuery").value);
+  if ($("logLevel").value) p.set("level", $("logLevel").value);
+  if ($("logType").value) p.set("type", $("logType").value);
+  if (after) p.set("after", after);
+  return p;
+}
+function appendLog(r) {
+  const box = $("logBox");
+  box.appendChild(logLine(r));
+  while (box.childElementCount > 500) box.removeChild(box.firstChild);
+  lastLogId = Math.max(lastLogId, r.id);
+  if ($("logAuto").checked) box.scrollTop = box.scrollHeight;
+}
+async function startLogs() {
+  stopLogs();
+  $("logBox").textContent = "";
+  lastLogId = 0;
+  const ctrl = (logAbort = new AbortController());
+  try {
+    const res = await fetch("/api/logs/stream?" + logParams(0), { headers: headers(), signal: ctrl.signal });
+    if (!res.ok) throw new Error("로그 스트림에 연결하지 못했어요 (" + res.status + ")");
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+        if (line) { try { appendLog(JSON.parse(line.slice(6))); } catch {} }
+      }
+    }
+  } catch (e) { if (e.name !== "AbortError") toast(e.message, "err"); }
+}
+function stopLogs() { if (logAbort) { logAbort.abort(); logAbort = null; } }
+let logDebounce;
+for (const id of ["logQuery", "logLevel", "logType"]) $(id).addEventListener("input", () => { clearTimeout(logDebounce); logDebounce = setTimeout(startLogs, 250); });
+$("logClear").onclick = async () => { try { await api("/api/logs", { method: "DELETE" }); $("logBox").textContent = ""; } catch (e) { toast(e.message, "err"); } };
+
+// Settings
+async function loadSettings() {
+  try {
+    const s = await api("/api/settings");
+    const form = $("settingsForm");
+    form.textContent = "";
+    for (const it of s.items) {
+      const wrap = document.createElement("div");
+      wrap.className = "grid gap-1 md:grid-cols-[18rem_1fr] md:items-start md:gap-4";
+      const label = document.createElement("div");
+      const name = document.createElement("div"); name.className = "font-mono text-xs text-zinc-300"; name.textContent = it.name;
+      const desc = document.createElement("div"); desc.className = "text-xs text-zinc-500"; desc.textContent = it.description;
+      label.append(name, desc);
+      const field = document.createElement("div"); field.className = "flex gap-2";
+      let input;
+      if (it.kind === "bool") {
+        input = document.createElement("select");
+        for (const v of ["", "true", "false"]) { const o = document.createElement("option"); o.value = v; o.textContent = v || "(미설정)"; input.appendChild(o); }
+      } else {
+        input = document.createElement("input");
+        input.type = it.secret ? "password" : "text";
+        input.autocomplete = "off";
+      }
+      input.value = it.value;
+      input.dataset.name = it.name;
+      input.className = "flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-500";
+      input.placeholder = it.effective ? "현재 적용값: " + it.effective : "";
+      field.appendChild(input);
+      if (it.secret) {
+        const gen = document.createElement("button");
+        gen.type = "button"; gen.textContent = "키 생성"; gen.className = "px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-xs shrink-0";
+        gen.onclick = async () => {
+          try { const r = await api("/api/settings/generate-key", { method: "POST" }); input.type = "text"; input.value = r.api_key; toast("새 키를 채웠어요. 저장해야 적용돼요."); } catch (e) { toast(e.message, "err"); }
+        };
+        field.appendChild(gen);
+      }
+      wrap.append(label, field);
+      form.appendChild(wrap);
+    }
+    const save = document.createElement("button");
+    save.type = "submit"; save.textContent = "저장"; save.className = "px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium";
+    form.appendChild(save);
+    $("settingsMeta").textContent = ".env: " + s.env_file + "  |  state: " + s.state_root;
+  } catch (e) { toast(e.message, "err"); }
+}
+$("settingsForm").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const values = {};
+  for (const el of $("settingsForm").querySelectorAll("[data-name]")) values[el.dataset.name] = el.value;
+  try {
+    const r = await api("/api/settings", jsonOpts("PUT", { values }));
+    toast(r.saved.length ? "저장했어요. 재시작 후 적용돼요." : "변경 사항이 없어요.");
+    loadSettings();
+  } catch (e) { toast(e.message, "err"); }
+};
+
+// Playground
+let pgCtrl = null;
+async function sendPlayground() {
+  const messages = [];
+  if ($("pgSystem").value.trim()) messages.push({ role: "system", content: $("pgSystem").value });
+  messages.push({ role: "user", content: $("pgPrompt").value });
+  const stream = $("pgStream").checked;
+  const body = { model: $("pgModel").value || undefined, messages, stream };
+  if ($("pgEffort").value) body.reasoning_effort = $("pgEffort").value;
+  const out = $("pgOut");
+  out.textContent = "";
+  $("pgStatus").textContent = "응답 대기 중";
+  $("pgSend").classList.add("hidden"); $("pgStop").classList.remove("hidden");
+  const ctrl = (pgCtrl = new AbortController());
+  const started = performance.now();
+  try {
+    const res = await fetch("/v1/chat/completions", { ...jsonOpts("POST", body), headers: headers({ "Content-Type": "application/json" }), signal: ctrl.signal });
+    if (!res.ok) { let b = null; try { b = await res.json(); } catch {} throw new Error(b?.error?.message || ("요청에 실패했어요 (" + res.status + ")")); }
+    if (!stream) {
+      const data = await res.json();
+      out.textContent = data.choices?.[0]?.message?.content ?? JSON.stringify(data, null, 2);
+    } else {
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          if (!chunk.startsWith("data: ") || chunk === "data: [DONE]") continue;
+          const data = JSON.parse(chunk.slice(6));
+          if (data.error) throw new Error(data.error.message);
+          out.textContent += data.choices?.[0]?.delta?.content || "";
+        }
+      }
+    }
+    $("pgStatus").textContent = "완료 " + ((performance.now() - started) / 1000).toFixed(1) + "초";
+  } catch (e) {
+    if (e.name === "AbortError") $("pgStatus").textContent = "중단했어요";
+    else { $("pgStatus").textContent = "오류"; out.textContent += (out.textContent ? "\n\n" : "") + "[오류] " + e.message; }
+  } finally { $("pgSend").classList.remove("hidden"); $("pgStop").classList.add("hidden"); pgCtrl = null; }
+}
+$("pgSend").onclick = () => { if ($("pgPrompt").value.trim()) sendPlayground(); else toast("프롬프트를 입력해 주세요.", "err"); };
+$("pgStop").onclick = () => pgCtrl && pgCtrl.abort();
+
+$("endpoint").textContent = location.origin + "/v1";
+showTab(["overview", "logs", "settings", "playground"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
+refreshAll();
+</script>
+</body>
+</html>
